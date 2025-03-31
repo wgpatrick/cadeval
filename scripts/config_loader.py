@@ -10,6 +10,7 @@ import os
 import sys
 import yaml
 from typing import Any, Dict, List, Optional, Union
+from dotenv import load_dotenv
 
 # Add parent directory to path for imports if needed
 parent_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -20,6 +21,9 @@ from scripts.logger_setup import get_logger, setup_logger
 
 # Initialize logger for this module
 logger = get_logger(__name__)
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Global configuration instance (singleton)
 _config_instance = None
@@ -201,6 +205,41 @@ class Config:
             raise ConfigError(error_msg)
         
         return path
+    
+    def get_api_key(self, provider: str) -> str:
+        """
+        Get the API key for a specified LLM provider from environment variables.
+        
+        Args:
+            provider: The LLM provider name (e.g., 'openai', 'anthropic', 'google')
+            
+        Returns:
+            The API key as a string
+            
+        Raises:
+            ConfigError: If the API key is not found or is empty
+        """
+        # Map provider names to environment variable names
+        provider_env_map = {
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+            'google': 'GOOGLE_API_KEY'
+        }
+        
+        if provider.lower() not in provider_env_map:
+            error_msg = f"Unknown LLM provider: {provider}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg)
+        
+        env_var_name = provider_env_map[provider.lower()]
+        api_key = os.getenv(env_var_name)
+        
+        if not api_key or api_key == f"your_{provider.lower()}_api_key_here":
+            error_msg = f"API key for {provider} not found in environment variables"
+            logger.error(error_msg)
+            raise ConfigError(error_msg)
+        
+        return api_key
 
 
 def get_config(config_path: str = "config.yaml") -> Config:
@@ -236,6 +275,20 @@ if __name__ == "__main__":
         print(f"Output directory: {config.get('directories.output')}")
         print(f"LLM model: {config.get('llm.models')[0]['name']}")
         print(f"Bounding box tolerance: {config.get('geometry_check.bounding_box_tolerance_mm')} mm")
+        
+        # Test API key access (will fail with template values)
+        try:
+            print("\nTesting API key access:")
+            for provider in ['openai', 'anthropic', 'google']:
+                try:
+                    # Just check if we can access, don't print actual keys
+                    api_key = config.get_api_key(provider)
+                    masked_key = api_key[:4] + '*' * (len(api_key) - 8) + api_key[-4:]
+                    print(f"  {provider.capitalize()} API key found: {masked_key}")
+                except ConfigError as e:
+                    print(f"  {provider.capitalize()} API key: Not configured")
+        except Exception as e:
+            print(f"Error testing API keys: {e}")
         
     except ConfigError as e:
         logger.error(f"Configuration error: {e}")
