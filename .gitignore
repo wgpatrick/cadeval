@@ -82,3 +82,5 @@ Thumbs.db
 *.sublime-workspace
 *.swp
 *.swo
+
+requirements.txt

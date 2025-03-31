@@ -319,14 +319,14 @@ my_cad_eval/
 ├── logs/                         # Stores log files (ignored by git)
 │   └── cadeval.log
 ├── config.yaml                   # Main configuration file
-├── requirements.txt              # Python dependencies
+├── environment.yml               # Conda environment definition
 ├── TODO.md                       # Project tasks
 └── README.md                     # This file
-```
 
-`run_evaluation.py` (future script) handles:
+````run_evaluation.py` (future script) handles:
 - Reading YAML tasks.
 - Generating SCAD via LLM APIs.
 - Invoking OpenSCAD headless to produce STLs.
 - Running geometry checks (`geometry_check.py`).
 - Saving a final JSON with results. 
+

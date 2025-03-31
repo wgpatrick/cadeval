@@ -24,13 +24,13 @@
     -   [x] Create `scripts/`
     -   [x] Create `generated_outputs/`
     -   [x] Create `results/`
--   [ ] **[Setup] Establish Python Environment:**
-    -   [x] Create virtual environment (`venv/`).
-    -   [x] Activate virtual environment.
-    -   [x] Create `requirements.txt` (based on dependencies listed in `fromchatgpt.md`, e.g., `openai`, `anthropic`, `google-genai`, `trimesh`, `open3d`, `numpy`, `pyyaml`, etc.).
-    -   [x] Install dependencies: `pip install -r requirements.txt`.
+-   [x] **[Setup] Establish Python Environment:**
+    -   [x] Create Conda environment (`cadeval` with Python 3.10).
+    -   [x] Activate Conda environment.
+    -   [x] Install dependencies using Conda/pip within the environment.
+    -   [x] Create `environment.yml` for tracking dependencies.
     -   [x] **[Test]** Verify environment and key package imports (e.g., `import openai`, `import trimesh`, `import yaml`).
-    -   [ ] Install open3d dependency (requires special installation on macOS).
+    -   [x] Install open3d dependency (successfully installed in Conda environment).
 -   [x] **[Setup] Implement Configuration Loading:**
     -   [x] Create `config.yaml` with structure from `fromchatgpt.md` (Paths, LLM settings, Check settings). *Remember to adjust `openscad.executable_path` for the target system.*
     -   [x] Develop `scripts/config_loader.py` to load and validate `config.yaml`.
