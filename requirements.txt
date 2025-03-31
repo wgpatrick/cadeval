@@ -1,0 +1,23 @@
+# LLM API clients
+openai>=1.0.0
+anthropic>=0.8.0
+google-generativeai>=0.3.0
+
+# Geometry processing
+trimesh>=3.20.0
+# NOTE: open3d requires special installation on macOS
+# For macOS users: 'pip install open3d' might fail - please see:
+# https://www.open3d.org/docs/release/getting_started.html for platform-specific instructions
+# open3d>=0.17.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Data handling & config
+pyyaml>=6.0
+jsonschema>=4.18.0
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.65.0
+click>=8.1.0
+colorama>=0.4.6 

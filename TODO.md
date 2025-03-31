@@ -14,32 +14,33 @@
 
 *Goal: Establish the basic project structure, environment, and configuration.*
 
--   [ ] **[Setup] Initialize Project Repository:**
-    -   [ ] Ensure Git repository is initialized.
-    -   [ ] Confirm primary branch is `main`.
-    -   [ ] Create/verify `.gitignore` (ignoring `venv/`, `__pycache__/`, `*.pyc`, `generated_outputs/`, `results/`, OS/IDE specific files like `.DS_Store`, `.vscode/`, `.idea/`).
--   [ ] **[Setup] Create Core Directory Structure:**
-    -   [ ] Create `tasks/`
-    -   [ ] Create `reference/`
-    -   [ ] Create `scripts/`
-    -   [ ] Create `generated_outputs/`
-    -   [ ] Create `results/`
+-   [x] **[Setup] Initialize Project Repository:**
+    -   [x] Ensure Git repository is initialized.
+    -   [x] Confirm primary branch is `main`.
+    -   [x] Create/verify `.gitignore` (ignoring `venv/`, `__pycache__/`, `*.pyc`, `generated_outputs/`, `results/`, OS/IDE specific files like `.DS_Store`, `.vscode/`, `.idea/`).
+-   [x] **[Setup] Create Core Directory Structure:**
+    -   [x] Create `tasks/`
+    -   [x] Create `reference/`
+    -   [x] Create `scripts/`
+    -   [x] Create `generated_outputs/`
+    -   [x] Create `results/`
 -   [ ] **[Setup] Establish Python Environment:**
-    -   [ ] Create virtual environment (`venv/`).
-    -   [ ] Activate virtual environment.
-    -   [ ] Create `requirements.txt` (based on dependencies listed in `fromchatgpt.md`, e.g., `openai`, `anthropic`, `google-genai`, `trimesh`, `open3d`, `numpy`, `pyyaml`, etc.).
-    -   [ ] Install dependencies: `pip install -r requirements.txt`.
-    -   [ ] **[Test]** Verify environment and key package imports (e.g., `import openai`, `import trimesh`, `import yaml`).
--   [ ] **[Setup] Implement Configuration Loading:**
-    -   [ ] Create `config.yaml` with structure from `fromchatgpt.md` (Paths, LLM settings, Check settings). *Remember to adjust `openscad.executable_path` for the target system.*
-    -   [ ] Develop `scripts/config_loader.py` to load and validate `config.yaml`.
-    -   [ ] **[Test]** Create `tests/test_config_loader.py` with unit tests for:
-        -   [ ] Successful loading.
-        -   [ ] Correct retrieval of nested values.
-        -   [ ] Error handling for missing/malformed file.
--   [ ] **[Setup] Implement Basic Logging:**
-    -   [ ] Create a utility in `scripts/` (e.g., `scripts/logger_setup.py`) for basic logging configuration (console/file output).
-    -   [ ] **[Test]** Write a simple test script or unit test to verify INFO/ERROR messages are logged correctly.
+    -   [x] Create virtual environment (`venv/`).
+    -   [x] Activate virtual environment.
+    -   [x] Create `requirements.txt` (based on dependencies listed in `fromchatgpt.md`, e.g., `openai`, `anthropic`, `google-genai`, `trimesh`, `open3d`, `numpy`, `pyyaml`, etc.).
+    -   [x] Install dependencies: `pip install -r requirements.txt`.
+    -   [x] **[Test]** Verify environment and key package imports (e.g., `import openai`, `import trimesh`, `import yaml`).
+    -   [ ] Install open3d dependency (requires special installation on macOS).
+-   [x] **[Setup] Implement Configuration Loading:**
+    -   [x] Create `config.yaml` with structure from `fromchatgpt.md` (Paths, LLM settings, Check settings). *Remember to adjust `openscad.executable_path` for the target system.*
+    -   [x] Develop `scripts/config_loader.py` to load and validate `config.yaml`.
+    -   [x] **[Test]** Create `tests/test_config_loader.py` with unit tests for:
+        -   [x] Successful loading.
+        -   [x] Correct retrieval of nested values.
+        -   [x] Error handling for missing/malformed file.
+-   [x] **[Setup] Implement Basic Logging:**
+    -   [x] Create a utility in `scripts/` (e.g., `scripts/logger_setup.py`) for basic logging configuration (console/file output).
+    -   [x] **[Test]** Write a simple test script or unit test to verify INFO/ERROR messages are logged correctly.
 
 ---
 
@@ -47,9 +48,9 @@
 
 *Goal: Define the evaluation tasks and prepare the ground truth models.*
 
--   [ ] **[Task Def] Define YAML Task Format:**
-    -   [ ] Document the required YAML structure (`task_id`, `description`, `reference_stl`, `requirements.bounding_box`, `requirements.topology_requirements`).
-    -   [ ] *(Optional)* Create a JSON schema (`schemas/task_schema.json`) for validation.
+-   [x] **[Task Def] Define YAML Task Format:**
+    -   [x] Document the required YAML structure (`task_id`, `description`, `reference_stl`, `requirements.bounding_box`, `requirements.topology_requirements`).
+    -   [x] *(Optional)* Create a JSON schema (`schemas/task_schema.json`) for validation.
 -   [ ] **[Task Def] Create Initial Evaluation Tasks (~10):**
     -   [ ] Develop ~10 diverse task descriptions.
     -   [ ] Create corresponding YAML files in `tasks/` (e.g., `tasks/rect_plate_4holes_simple.yaml`).

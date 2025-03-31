@@ -53,6 +53,16 @@ requirements:
     expected_component_count: 1 # This implies no floating parts
 ```
 
+**Field Definitions:**
+
+*   `task_id` (string, required): A unique identifier for the task (e.g., `snake_case_description`). Used for naming output files.
+*   `description` (string, required): The natural language prompt provided to the LLM to generate the OpenSCAD model.
+*   `reference_stl` (string, required): The relative path (from the project root) to the ground truth `.stl` file located in the `reference/` directory. This file is used for comparison during the geometry checks.
+*   `requirements` (object, required): A dictionary containing specific criteria for evaluating the generated model.
+    *   `bounding_box` (list of 3 numbers, required): The target dimensions `[Length, Width, Height]` in millimeters (mm) that the final model's bounding box should match, within a defined tolerance (see `config.yaml`). The order should be consistent.
+    *   `topology_requirements` (object, optional): Specifies requirements related to the model's structure.
+        *   `expected_component_count` (integer, optional): The number of distinct, unconnected solid bodies expected in the final model. For single-part designs, this should typically be `1`. If omitted, this specific check might be skipped or default to assuming 1.
+
 ---
 
 ## 4. Automating the Code Generation & Rendering
@@ -62,10 +72,10 @@ requirements:
 **Approach:**
 
 - A Python script iterates over each task defined in the `tasks/` directory.
-- For each task, the script iterates through a list of target Large Language Models (LLMs).
-- The script formats the task `description` into the appropriate API request format for the current LLM.
+- For each task, the script iterates through a list of target Large Language Models (LLMs) specified in the `config.yaml` under the `llm.models` key. Each entry in this list defines the model's `name`, `provider`, and specific parameters like `temperature` and `max_tokens`.
+- The script formats the task `description` into the appropriate API request format for the current LLM provider.
 - It uses official Python client libraries (e.g., `openai`, `anthropic`, `google-generativeai`) to send the request to the respective LLM API endpoint.
-- The LLMs targeted for evaluation are:
+- The LLMs targeted for evaluation (as configured in `config.yaml`) typically include:
     - OpenAI: `gpt-4o-mini` (or similar small/efficient model)
     - Anthropic: `claude-3-5-sonnet-20240620`
     - Google: `gemini-1.5-pro-latest`
@@ -291,22 +301,32 @@ my_cad_eval/
 ├── reference/
 │   ├── rect_plate_4holes.stl
 │   ├── cylinder_spacer.stl
+│   └── ...
 ├── scripts/
-│   ├── run_evaluation.py
-│   ├── geometry_check.py
+│   ├── config_loader.py          # Handles loading config.yaml
+│   ├── test_config_loader.py     # Unit tests for config loader
+│   ├── logger_setup.py           # Configures project logging
+│   ├── test_logger_setup.py      # Unit tests for logger setup
+│   ├── run_evaluation.py         # Target main orchestration script (Phase 6)
+│   ├── geometry_check.py         # Target geometry checking script (Phase 5)
+│   └── ...                       # Other future scripts (e.g., LLM clients, renderer)
+├── generated_outputs/            # Stores LLM-generated .scad and rendered .stl/.json files
+│   ├── rect_plate_4holes_gpt-4o-mini.scad
+│   ├── rect_plate_4holes_gpt-4o-mini.stl
 │   └── ...
-├── generated_outputs/
-│   ├── rect_plate_4holes.scad
-│   ├── rect_plate_4holes.stl
-│   └── ...
-└── results/
-    └── eval_results.json
+├── results/                      # Stores final evaluation JSON results
+│   └── eval_results_run_XYZ.json
+├── logs/                         # Stores log files (ignored by git)
+│   └── cadeval.log
+├── config.yaml                   # Main configuration file
+├── requirements.txt              # Python dependencies
+├── TODO.md                       # Project tasks
+└── README.md                     # This file
 ```
 
-`run_evaluation.py` handles:
-
+`run_evaluation.py` (future script) handles:
 - Reading YAML tasks.
-- Generating SCAD via LLM/Cursor.
+- Generating SCAD via LLM APIs.
 - Invoking OpenSCAD headless to produce STLs.
-- Running geometry checks (geometry_check.py).
-- Saving a final JSON with pass/fail or scores. 
+- Running geometry checks (`geometry_check.py`).
+- Saving a final JSON with results. 

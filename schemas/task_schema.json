@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CadEval Task Definition",
+  "description": "Schema for validating task definition YAML files in the CadEval project.",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "description": "Unique identifier for the task (e.g., snake_case_description).",
+      "type": "string"
+    },
+    "description": {
+      "description": "Natural language prompt for the LLM.",
+      "type": "string"
+    },
+    "reference_stl": {
+      "description": "Relative path to the reference ground truth STL file.",
+      "type": "string"
+    },
+    "requirements": {
+      "description": "Specific criteria for evaluating the generated model.",
+      "type": "object",
+      "properties": {
+        "bounding_box": {
+          "description": "Target dimensions [Length, Width, Height] in millimeters (mm).",
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "topology_requirements": {
+          "description": "Specifies requirements related to the model's structure.",
+          "type": "object",
+          "properties": {
+            "expected_component_count": {
+              "description": "The number of distinct solid bodies expected (usually 1 for single parts).",
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "bounding_box"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "task_id",
+    "description",
+    "reference_stl",
+    "requirements"
+  ],
+  "additionalProperties": false
+} 
