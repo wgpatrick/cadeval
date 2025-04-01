@@ -133,14 +133,19 @@ class OpenAIClient(BaseLLMClient):
         # Initialize OpenAI client
         self.client = OpenAI(api_key=self.api_key)
         
-        # Set default parameters
+        # Set default parameters - store the intended max length generically
         self.default_params = {
             'temperature': kwargs.get('temperature', 0.7),
-            'max_tokens': kwargs.get('max_tokens', 1000),
+            '_max_output_length': kwargs.get('max_tokens', 1000), # Use internal name
             'top_p': kwargs.get('top_p', 1.0),
             'frequency_penalty': kwargs.get('frequency_penalty', 0.0),
             'presence_penalty': kwargs.get('presence_penalty', 0.0),
         }
+        # Add the correct max length parameter name based on model
+        if 'o1-' in self.model_name: # Heuristic check for o1 models
+             self.default_params['max_completion_tokens'] = self.default_params.pop('_max_output_length')
+        else:
+             self.default_params['max_tokens'] = self.default_params.pop('_max_output_length')
     
     @retry(
         stop=stop_after_attempt(3),
@@ -165,19 +170,24 @@ class OpenAIClient(BaseLLMClient):
         # Merge default parameters with request-specific ones
         params = {**self.default_params, **kwargs}
         
-        # Log the request
+        # Ensure the correct max length parameter is used based on the model
+        # (This handles overrides via kwargs as well)
+        max_len_param_name = 'max_completion_tokens' if 'o1-' in self.model_name else 'max_tokens'
+        if max_len_param_name == 'max_completion_tokens' and 'max_tokens' in params:
+            params['max_completion_tokens'] = params.pop('max_tokens')
+        elif max_len_param_name == 'max_tokens' and 'max_completion_tokens' in params:
+             params['max_tokens'] = params.pop('max_completion_tokens')
+
+        # Log the request (using the final parameters)
         self._log_request(prompt, params)
         
         start_time = time.time()
         try:
+            # Pass parameters dynamically
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=params['temperature'],
-                max_tokens=params['max_tokens'],
-                top_p=params['top_p'],
-                frequency_penalty=params['frequency_penalty'],
-                presence_penalty=params['presence_penalty'],
+                **params # Pass the prepared parameters dictionary
             )
             
             generated_text = response.choices[0].message.content
@@ -188,6 +198,119 @@ class OpenAIClient(BaseLLMClient):
             
             return generated_text
             
+        except openai.BadRequestError as e:
+             # Specific handling for bad requests which might include parameter issues
+             logger.error(f"OpenAI API BadRequestError: {str(e)}")
+             # Re-raise as LLMError for consistent handling upstream
+             raise LLMError(f"OpenAI API BadRequestError: {str(e)}")
+        except (openai.APIError, openai.APIConnectionError, openai.RateLimitError) as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            raise LLMError(f"OpenAI API error: {str(e)}")
+
+
+class OpenAIReasoningClient(BaseLLMClient):
+    """
+    Client wrapper for OpenAI Reasoning models (o1, o3) using the Responses API.
+    """
+    
+    def __init__(self, model_name: str, **kwargs):
+        """
+        Initialize the OpenAI Reasoning client.
+        
+        Args:
+            model_name: The specific OpenAI reasoning model to use (e.g., o1, o3-mini)
+            **kwargs: Additional model-specific parameters (effort, max_output_tokens)
+        """
+        super().__init__('openai', model_name, **kwargs)
+        
+        # Initialize OpenAI client
+        self.client = OpenAI(api_key=self.api_key)
+        
+        # Set default parameters for the Responses API
+        self.default_params = {
+            'reasoning': {'effort': kwargs.get('effort', 'medium')},
+            # Note: max_output_tokens limits TOTAL tokens (reasoning + output)
+            'max_output_tokens': kwargs.get('max_output_tokens', kwargs.get('max_tokens', 10000)) # Use higher default if not specified
+        }
+        # Remove max_tokens if it was passed via kwargs from config designed for chat models
+        if 'max_tokens' in self.parameters:
+             del self.parameters['max_tokens']
+
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((openai.APIError, openai.APIConnectionError, openai.RateLimitError, Timeout)),
+        reraise=True
+    )
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """
+        Generate text using OpenAI Responses API (for o1/o3 models).
+        
+        Args:
+            prompt: The input prompt text
+            **kwargs: Additional parameters for this specific request (effort, max_output_tokens)
+        
+        Returns:
+            The generated text response
+            
+        Raises:
+            LLMError: If text generation fails or is incomplete without output
+        """
+        # Merge default parameters with request-specific ones
+        params = {**self.default_params, **kwargs}
+        # Ensure nested 'reasoning' dict is handled correctly if passed in kwargs
+        if 'effort' in kwargs:
+            params['reasoning'] = {'effort': kwargs['effort']}
+            del params['effort'] # Remove top-level if present
+        
+        # Format input for the Responses API
+        input_messages = [{"role": "user", "content": prompt}]
+        
+        # Log the request (adjust logging if needed for different params)
+        log_params_for_display = {k: v for k, v in params.items()}
+        log_params_for_display['reasoning_effort'] = params.get('reasoning', {}).get('effort', 'default')
+        if 'reasoning' in log_params_for_display: del log_params_for_display['reasoning']
+        self._log_request(prompt, log_params_for_display)
+        
+        start_time = time.time()
+        try:
+            response = self.client.responses.create(
+                model=self.model_name,
+                input=input_messages,
+                reasoning=params['reasoning'],
+                max_output_tokens=params['max_output_tokens']
+            )
+            
+            duration = time.time() - start_time
+            
+            # Check response status
+            if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
+                error_msg = "Generation stopped due to max_output_tokens limit."
+                if response.output_text:
+                    logger.warning(f"{error_msg} Partial output returned.")
+                    # Log partial response
+                    self._log_response(response.output_text, duration)
+                    return response.output_text # Return partial text
+                else:
+                    error_msg += " No output generated (limit reached during reasoning)."
+                    logger.error(error_msg)
+                    raise LLMError(error_msg)
+            elif response.status != "completed":
+                 error_msg = f"Generation finished with unexpected status: {response.status}"
+                 logger.error(error_msg)
+                 raise LLMError(error_msg)
+
+            generated_text = response.output_text
+            
+            # Log the successful response
+            self._log_response(generated_text, duration)
+            
+            return generated_text
+            
+        except openai.BadRequestError as e:
+            logger.error(f"OpenAI API BadRequestError: {str(e)}")
+            raise LLMError(f"OpenAI API BadRequestError: {str(e)}")
         except (openai.APIError, openai.APIConnectionError, openai.RateLimitError) as e:
             logger.error(f"OpenAI API error: {str(e)}")
             raise LLMError(f"OpenAI API error: {str(e)}")
@@ -195,8 +318,8 @@ class OpenAIClient(BaseLLMClient):
             logger.error(f"Request to OpenAI API timed out: {str(e)}")
             raise LLMError(f"Request to OpenAI API timed out: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error with OpenAI API: {str(e)}")
-            raise LLMError(f"Unexpected error with OpenAI API: {str(e)}")
+            logger.error(f"Unexpected error with OpenAI Responses API: {str(e)}")
+            raise LLMError(f"Unexpected error with OpenAI Responses API: {str(e)}")
 
 
 class AnthropicClient(BaseLLMClient):
@@ -392,7 +515,12 @@ def create_llm_client(model_config: Dict[str, Any]) -> BaseLLMClient:
     # Create the appropriate client based on provider
     try:
         if provider == 'openai':
-            return OpenAIClient(model_name, **params)
+            # Check if it's a reasoning model (o1/o3)
+            if model_name.startswith('o1') or model_name.startswith('o3'):
+                 logger.info(f"Detected OpenAI reasoning model: {model_name}. Using Responses API client.")
+                 return OpenAIReasoningClient(model_name, **params)
+            else:
+                 return OpenAIClient(model_name, **params) # Use standard ChatCompletion client
         elif provider == 'anthropic':
             return AnthropicClient(model_name, **params)
         elif provider == 'google':
