@@ -322,7 +322,7 @@ def check_bounding_box(
         return False, error_msg
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold: float, logger: logging.Logger) -> tuple[bool, float | None, str | None]:
+def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold: float, logger: logging.Logger) -> tuple[float | None, float | None, str | None]:
     """
     Performs ICP alignment and calculates Chamfer distance.
     
@@ -332,17 +332,16 @@ def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold
     - Chamfer distance calculation requires careful handling of point correspondences.
     - Comparing identical file paths is handled as a special case (returns 0.0 distance).
     
-    Retries on failure. Returns (is_similar: bool, distance: float | None, error_msg: str | None).
+    Retries on failure. Returns (chamfer_distance: float | None, icp_fitness: float | None, error_msg: str | None).
     """
     # Ensure file existence checks are done early
-    if not os.path.exists(generated_stl_path): return False, None, f"Generated file not found: {generated_stl_path}"
-    if not os.path.exists(reference_stl_path): return False, None, f"Reference file not found: {reference_stl_path}"
+    if not os.path.exists(generated_stl_path): return None, None, f"Generated file not found: {generated_stl_path}"
+    if not os.path.exists(reference_stl_path): return None, None, f"Reference file not found: {reference_stl_path}"
     
     # Special case - if the files are identical (same path), we can skip ICP and report near-zero distance
-    # This acts as a sanity check to ensure our comparison logic is sound
     if os.path.samefile(generated_stl_path, reference_stl_path):
-        logger.debug(f"Files are identical (same path), returning zero distance")
-        return True, 0.0, None
+        logger.debug(f"Files are identical (same path), returning zero distance and perfect fitness")
+        return 0.0, 1.0, None # Return 0 distance, perfect fitness (1.0)
 
     try:
         run_id = f"{os.path.basename(generated_stl_path)}_vs_{os.path.basename(reference_stl_path)}".replace('.stl', '')
@@ -350,8 +349,8 @@ def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold
         logger.debug(f"Loading meshes for similarity check: {generated_stl_path} vs {reference_stl_path}")
         generated_mesh = o3d.io.read_triangle_mesh(generated_stl_path)
         reference_mesh = o3d.io.read_triangle_mesh(reference_stl_path)
-        if not generated_mesh.has_triangles(): return False, None, "Generated mesh has no triangles"
-        if not reference_mesh.has_triangles(): return False, None, "Reference mesh has no triangles"
+        if not generated_mesh.has_triangles(): return None, None, "Generated mesh has no triangles"
+        if not reference_mesh.has_triangles(): return None, None, "Reference mesh has no triangles"
 
         generated_mesh.compute_vertex_normals()
         reference_mesh.compute_vertex_normals()
@@ -370,7 +369,7 @@ def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold
 
         # Check if meshes are valid before sampling
         if not generated_mesh.has_triangles() or not reference_mesh.has_triangles():
-            return False, None, "Cannot sample points from empty mesh"
+            return None, None, "Cannot sample points from empty mesh"
         # ---
 
         logger.debug(f"Sampling up to {N_POINTS_TARGET} points from each mesh...")
@@ -389,7 +388,7 @@ def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold
                            f"Similarity check might be inaccurate.")
             logger.warning(warning_msg)
             if actual_gen_points == 0 or actual_ref_points == 0:
-                 return False, None, "Sampling produced zero points."
+                 return None, None, "Sampling produced zero points."
             # Proceed even with few points, but warning issued.
 
         # --- Save Sampled PCDs if Debugging ---
@@ -425,7 +424,8 @@ def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold
             estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
             criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=200)
         )
-        logger.debug(f"ICP Result (PointToPlane): Fitness={reg_p2p.fitness:.6f}, InlierRMSE={reg_p2p.inlier_rmse:.6f}")
+        icp_fitness_score = reg_p2p.fitness # Store the fitness score
+        logger.debug(f"ICP Result (PointToPlane): Fitness={icp_fitness_score:.6f}, InlierRMSE={reg_p2p.inlier_rmse:.6f}")
 
         gen_pcd_transformed = gen_pcd.transform(reg_p2p.transformation)
 
@@ -444,22 +444,20 @@ def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold
         logger.debug(f"Distances Ref->Gen: mean={mean_ref_to_gen:.6f}, max={max_ref_to_gen:.6f}, std={std_ref_to_gen:.6f}")
 
         chamfer_distance = (mean_gen_to_ref + mean_ref_to_gen) / 2.0
-        logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f}")
+        logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f}, ICP Fitness = {icp_fitness_score:.6f}")
 
-        is_similar = chamfer_distance <= threshold # Compare against the original threshold param
-        if is_similar:
-             logger.debug("--- Similarity Check PASSED ---")
-             return True, chamfer_distance, None
-        else:
+        error_msg = None
+        if chamfer_distance > threshold:
              error_msg = f"Chamfer distance {chamfer_distance:.4f} exceeds threshold {threshold}"
-             logger.debug(f"--- Similarity Check FAILED: {error_msg} ---")
-             return False, chamfer_distance, error_msg
+             logger.debug(f"--- Similarity Check Note: {error_msg} ---")
+
+        return chamfer_distance, icp_fitness_score, error_msg # Return distance, fitness, and potential error message
 
     except Exception as e:
         error_msg = f"Error during similarity check between {generated_stl_path} and {reference_stl_path}: {e}"
         logger.error(error_msg, exc_info=True)
         logger.debug(f"--- Similarity Check ERRORED ---")
-        return False, None, error_msg
+        return None, None, error_msg # Return None for values on error
 
 
 # --- Main Orchestration Function --- 
@@ -569,15 +567,18 @@ def perform_geometry_checks(
     if not reference_stl_path or not os.path.exists(reference_stl_path):
         check_results["check_errors"].append(f"SimilarityCheck: Reference STL not found ({reference_stl_path}).")
     elif is_watertight is not False: # Run if watertight is True or None (i.e., didn't explicitly fail)
-        try: # Add try-except block
+        try:
             threshold = config.get('similarity_threshold', DEFAULT_CONFIG['similarity_threshold'])
-            is_similar, chamfer_dist, sim_error = check_similarity(generated_stl_path, reference_stl_path, threshold, logger)
-            check_results["icp_fitness_score"] = is_similar
+            chamfer_dist, icp_fitness, sim_error = check_similarity(generated_stl_path, reference_stl_path, threshold, logger)
             check_results["geometric_similarity_distance"] = chamfer_dist
-            if sim_error: # Add error message if it exists and check passed
+            check_results["icp_fitness_score"] = icp_fitness
+            if sim_error: # Add error message if it exists
                 check_results["check_errors"].append(f"SimilarityCheck: {sim_error}")
         except Exception as e:
             logger.error(f"Unhandled error calling check_similarity: {e}", exc_info=True)
+            check_results["check_errors"].append(f"SimilarityCheck: Unhandled Exception - {e}")
+            check_results["geometric_similarity_distance"] = None
+            check_results["icp_fitness_score"] = None
     else:
         logger.warning("Skipping similarity check due to prior watertight/load failure.")
         check_results["check_errors"].append("SimilarityCheck: Skipped due to prior watertight/load failure.")

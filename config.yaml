@@ -14,18 +14,18 @@ directories:
   output: ./generated_outputs
 llm:
   models:
-  - name: gpt-4o-mini
+  - name: o1-2024-12-17
     provider: openai
-    temperature: 0.2
-    max_tokens: 1500
-  - name: claude-3-5-sonnet-20240620
+    temperature: 0.4
+    max_tokens: 15000
+  - name: claude-3-7-sonnet-20250219
     provider: anthropic
-    temperature: 0.2
-    max_tokens: 1500
-  - name: gemini-1.5-pro-latest
+    temperature: 0.4
+    max_tokens: 15000
+  - name: gemini-2.5-pro-exp-03-25
     provider: google
-    temperature: 0.2
-    max_tokens: 1500
+    temperature: 0.4
+    max_tokens: 15000
 geometry_check:
   bounding_box_tolerance_mm: 0.5
   icp_fitness_threshold: 1.0

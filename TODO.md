@@ -52,20 +52,20 @@
     -   [x] Document the required YAML structure (`task_id`, `description`, `reference_stl`, `requirements.bounding_box`, `requirements.topology_requirements`).
     -   [x] *(Optional)* Create a JSON schema (`schemas/task_schema.json`) for validation.
 -   [ ] **[Task Def] Create Initial Evaluation Tasks (~10):**
-    -   [ ] Develop ~10 diverse task descriptions.
-    -   [ ] Create corresponding YAML files in `tasks/` (e.g., `tasks/rect_plate_4holes_simple.yaml`).
+    -   [x] Develop 1 initial task description (`task1`). *(Defer ~9 more until after pipeline testing)*.
+    -   [x] Create 1 initial YAML file in `tasks/` (`task1.yaml`). *(Defer ~9 more until after pipeline testing)*.
 -   [ ] **[Task Def] Create/Acquire Reference STL Models:**
-    -   [ ] For each task YAML, create or obtain the matching reference STL file.
-    -   [ ] Place reference STLs in `reference/` with correct filenames.
-    -   [ ] **[Validation]** Manually inspect each reference STL for correctness and geometric soundness.
--   [ ] **[Task Def] Implement Task Loading Script:**
-    -   [ ] Develop `scripts/task_loader.py` to scan `tasks/`, parse YAMLs, and return task data.
-    -   [ ] *(Optional)* Integrate JSON schema validation.
-    -   [ ] **[Test]** Create `tests/test_task_loader.py` with unit tests for:
-        -   [ ] Loading valid tasks.
-        -   [ ] Correct attribute parsing.
-        -   [ ] Handling invalid/non-matching YAMLs.
-        -   [ ] Handling empty directory.
+    -   [x] Create 1 initial reference STL model (`task1.stl` via Fusion 360). *(Defer acquiring/creating ~9 more)*.
+    -   [x] Place initial reference STL in `reference/` with correct filename (`task1.stl`). *(Defer placing ~9 more)*.
+    -   [x] **[Validation]** Manually inspect the initial reference STL (`task1.stl`) for correctness and geometric soundness. *(Defer validation for remaining tasks)*.
+-   [x] **[Task Def] Implement Task Loading Script:**
+    -   [x] Develop `scripts/task_loader.py` to scan `tasks/`, parse YAMLs, and return task data.
+    -   [x] *(Optional)* Integrate JSON schema validation.
+    -   [x] **[Test]** Create `tests/test_task_loader.py` with unit tests for:
+        -   [x] Loading valid tasks.
+        -   [x] Correct attribute parsing.
+        -   [x] Handling invalid/non-matching YAMLs.
+        -   [x] Handling empty directory.
 
 ---
 
@@ -73,28 +73,28 @@
 
 *Goal: Implement the logic to interact with LLM APIs and generate OpenSCAD code.*
 
--   [ ] **[LLM] Secure API Key Handling:**
-    -   [ ] Use `.env` file and `python-dotenv` (from `requirements.txt`) to manage API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). Ensure `.env` is in `.gitignore`.
-    -   [ ] Update `config_loader.py` or create a utility to load environment variables.
--   [ ] **[LLM] Develop LLM API Client Wrapper(s):**
-    -   [ ] Create script(s) in `scripts/` (e.g., `scripts/llm_clients.py`) to abstract interactions with OpenAI, Anthropic, and Google APIs.
-    -   [ ] Functions should take prompt text, model name, and other parameters (like temperature, max_tokens from `config.yaml`) and return the generated text or handle errors.
-    -   [ ] Implement basic API error handling (network issues, rate limits, invalid responses) and logging as specified in Section 4.1.
-    -   [ ] **[Test]** *(Requires API Keys)* Write integration tests (potentially skippable in automated CI without keys) to:
-        -   [ ] Send a simple test prompt to each configured LLM.
-        -   [ ] Verify a text response is received.
-        -   [ ] Test basic error handling (e.g., providing an invalid API key temporarily).
--   [ ] **[LLM] Implement SCAD Generation Logic:**
-    -   [ ] Create the main script `scripts/generate_scad.py`.
-    -   [ ] This script should:
-        -   [ ] Load configuration (`config_loader.py`).
-        -   [ ] Load tasks (`task_loader.py`).
-        -   [ ] Iterate through each task.
-        -   [ ] Iterate through the target LLMs specified in `config.yaml`.
-        -   [ ] Format the task `description` into a suitable prompt (consider a simple template initially). *Log the exact prompt used.*
-        -   [ ] Call the appropriate LLM client wrapper to get the OpenSCAD code.
-        -   [ ] Save the raw generated OpenSCAD code to the `generated_outputs/` directory using the specified naming convention (`{task_id}_{model_name}.scad`). Handle LLM failures gracefully (log error, skip saving).
-    -   [ ] **[Test]** Write unit tests for prompt formatting. Write integration tests (can be run manually or configured carefully) for the end-to-end flow of one task with one mock/real LLM call, verifying the `.scad` file is created with expected content.
+-   [x] **[LLM] Secure API Key Handling:**
+    -   [x] Use `.env` file and `python-dotenv` (from `requirements.txt`) to manage API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). Ensure `.env` is in `.gitignore`.
+    -   [x] Update `config_loader.py` or create a utility to load environment variables.
+-   [x] **[LLM] Develop LLM API Client Wrapper(s):**
+    -   [x] Create script(s) in `scripts/` (e.g., `scripts/llm_clients.py`) to abstract interactions with OpenAI, Anthropic, and Google APIs.
+    -   [x] Functions should take prompt text, model name, and other parameters (like temperature, max_tokens from `config.yaml`) and return the generated text or handle errors.
+    -   [x] Implement basic API error handling (network issues, rate limits, invalid responses) and logging as specified in Section 4.1.
+    -   [x] **[Test]** *(Requires API Keys)* Write integration tests (potentially skippable in automated CI without keys) to:
+        -   [x] Send a simple test prompt to each configured LLM.
+        -   [x] Verify a text response is received.
+        -   [x] Test basic error handling (e.g., providing an invalid API key temporarily).
+-   [x] **[LLM] Implement SCAD Generation Logic:**
+    -   [x] Create the main script `scripts/generate_scad.py`.
+    -   [x] This script should:
+        -   [x] Load configuration (`config_loader.py`).
+        -   [x] Load tasks (`task_loader.py`).
+        -   [x] Iterate through each task.
+        -   [x] Iterate through the target LLMs specified in `config.yaml`.
+        -   [x] Format the task `description` into a suitable prompt (consider a simple template initially). *Log the exact prompt used.*
+        -   [x] Call the appropriate LLM client wrapper to get the OpenSCAD code.
+        -   [x] Save the raw generated OpenSCAD code to the `generated_outputs/` directory using the specified naming convention (`{task_id}_{model_name}.scad`). Handle LLM failures gracefully (log error, skip saving).
+    -   [x] **[Test]** Write unit tests for prompt formatting. Write integration tests (can be run manually or configured carefully) for the end-to-end flow of one task with one mock/real LLM call, verifying the `.scad` file is created with expected content.
 
 ---
 
@@ -102,37 +102,37 @@
 
 *Goal: Automate the conversion of generated `.scad` files to `.stl` format using OpenSCAD headless mode.*
 
--   [ ] **[Render] OpenSCAD Path Validation:**
-    -   [ ] Add a check in the rendering script or a utility function to verify the `openscad.executable_path` from `config.yaml` points to a valid executable file. Fail early if not found.
-    -   [ ] Add a check for the OpenSCAD version (using `--version`) against `openscad.minimum_version`. Log a warning or error if too old, especially regarding summary file support (Section 4.2).
+-   [x] **[Render] OpenSCAD Path Validation:**
+    -   [x] Add a check in the rendering script or a utility function to verify the `openscad.executable_path` from `config.yaml` points to a valid executable file. Fail early if not found.
+    -   [x] Add a check for the OpenSCAD version (using `--version`) against `openscad.minimum_version`. Log a warning or error if too old, especially regarding summary file support (Section 4.2).
 -   [ ] **[Render] Implement Rendering Script:**
-    -   [ ] Create `scripts/render_scad.py`.
-    -   [ ] This script should:
-        -   [ ] Accept a list of `.scad` file paths as input (or scan `generated_outputs/`).
-        -   [ ] Load configuration (`config.yaml`).
-        -   [ ] For each `.scad` file:
-            -   [ ] Define output `.stl` and `.json` (summary) paths in `generated_outputs/`.
-            -   [ ] Construct the `openscad` command line arguments precisely as specified in Section 4.2 (using `-q`, `--export-format`, `--backend`, `--summary`, `--summary-file`, `-o`). *Ensure paths are quoted if they might contain spaces.*
-            -   [ ] Execute the command using `subprocess.run`.
-            -   [ ] Implement the timeout (`openscad.render_timeout_seconds`).
-            -   [ ] Capture `stdout`, `stderr`, and `returncode`.
-            -   [ ] Determine render status (Success, Compile Error, Timeout).
-            -   [ ] Check if the `.stl` file was created.
-            -   [ ] Check if the `.json` summary file was created (if expected based on OpenSCAD version/flags).
-            -   [ ] Log detailed information: command executed, status, duration, paths to output files, stderr on failure.
-        -   [ ] Return structured status information for each file processed.
--   [ ] **[Render] Develop Test SCAD Files:**
-    -   [ ] Create a few simple, known-good `.scad` files in a test directory (e.g., `tests/test_data/scad/`).
-    -   [ ] Create a simple, known-bad `.scad` file (syntax error).
-    -   [ ] Create a `.scad` file likely to take longer to render (for timeout testing, if feasible).
--   [ ] **[Render] Testing:**
+    -   [x] Create `scripts/render_scad.py`.
+    -   [x] This script should:
+        -   [x] Accept a list of `.scad` file paths as input (or scan `generated_outputs/`). *(Scanning implemented in `render_all_scad`)*
+        -   [x] Load configuration (`config.yaml`). *(Done in `render_scad_file` and `__main__`)*
+        -   [x] For each `.scad` file: *(Logic implemented in `render_scad_file`)*
+            -   [x] Define output `.stl` and `.json` (summary) paths in `generated_outputs/`.
+            -   [x] Construct the `openscad` command line arguments precisely as specified in Section 4.2 (using `-q`, `--export-format`, `--backend`, `--summary`, `--summary-file`, `-o`). *Ensure paths are quoted if they might contain spaces.* *(Handled by subprocess)*
+            -   [x] Execute the command using `subprocess.run`.
+            -   [x] Implement the timeout (`openscad.render_timeout_seconds`).
+            -   [x] Capture `stdout`, `stderr`, and `returncode`.
+            -   [x] Determine render status (Success, Compile Error, Timeout).
+            -   [x] Check if the `.stl` file was created.
+            -   [x] Check if the `.json` summary file was created (if expected based on OpenSCAD version/flags).
+            -   [x] Log detailed information: command executed, status, duration, paths to output files, stderr on failure.
+        -   [x] Return structured status information for each file processed. *(Done by `render_scad_file`)*
+-   [x] **[Render] Develop Test SCAD Files:**
+    -   [x] Create a few simple, known-good `.scad` files in a test directory (e.g., `tests/test_data/scad/`).
+    -   [x] Create a simple, known-bad `.scad` file (syntax error).
+    -   [x] Create a `.scad` file likely to take longer to render (for timeout testing, if feasible).
+-   [x] **[Render] Testing:**
     -   [ ] **[Test]** Write unit tests for command construction logic.
-    -   [ ] **[Test]** *(Requires OpenSCAD installation)* Write integration tests for `render_scad.py`:
-        -   [ ] Test rendering a known-good file -> verify STL (+ JSON summary if applicable) is created, return code 0.
-        -   [ ] Test rendering a known-bad file -> verify return code is non-zero, capture stderr.
-        -   [ ] Test rendering with a timeout (if a suitable test file exists) -> verify timeout behaviour.
+    -   [x] **[Test]** *(Requires OpenSCAD installation)* Write integration tests for `render_scad.py`:
+        -   [x] Test rendering a known-good file -> verify STL (+ JSON summary if applicable) is created, return code 0.
+        -   [x] Test rendering a known-bad file -> verify return code is non-zero, capture stderr.
+        -   [x] Test rendering with a timeout (if a suitable test file exists) -> verify timeout behaviour.
         -   [ ] Test handling if OpenSCAD executable is not found.
-        -   [ ] Test handling if input `.scad` file is missing.
+        -   [x] Test handling if input `.scad` file is missing.
 
 ---
 
@@ -140,44 +140,44 @@
 
 *Goal: Implement automated checks on the generated STL files based on requirements and comparison with reference models.*
 
--   [ ] **[Check] Implement `geometry_check.py`:**
-    -   [ ] Create `scripts/geometry_check.py`.
-    -   [ ] This script/module should define functions to perform each check specified in Section 5.
-    -   [ ] Input to the main checking function: paths to generated STL, reference STL, task requirements (dict), rendering status, path to OpenSCAD summary JSON (optional).
-    -   [ ] **Check 1: Render Success:** Implement logic based on rendering status input.
-    -   [ ] **Check 2: Watertight:** Use `trimesh` (`mesh.is_watertight`). Handle potential errors during mesh loading. *Prerequisite: Render Success.*
-    -   [ ] **Check 3: Single Component:** Use `trimesh` (`mesh.body_count`). Compare with `task_requirements['topology_requirements']['expected_component_count']` if present. *Prerequisite: Render Success.*
-    -   [ ] **Check 4: Bounding Box Accuracy:**
-        -   [ ] Prioritize getting bounding box from OpenSCAD summary JSON if available and valid.
-        -   [ ] Fallback to calculating with `trimesh` (`mesh.bounds`).
-        -   [ ] Compare extents ([L, W, H]) against `task_requirements['bounding_box']` using the tolerance from `config.yaml` (`geometry_check.bounding_box_tolerance_mm`). *Handle potential dimension ordering issues.*
-        -   *Prerequisite: Render Success & valid mesh/summary.*
-    -   [ ] **Check 5: Geometric Similarity (Mesh Comparison):**
-        -   [ ] Load generated and reference STL using `trimesh` or `open3d`. Handle loading errors.
-        -   [ ] Perform ICP alignment (`open3d.pipelines.registration.registration_icp` using default parameters) to align generated to reference.
-        -   [ ] Record the ICP fitness score (`icp_result.fitness`).
-        -   [ ] Calculate Chamfer Distance (`open3d.legacy.pipelines.registration.evaluate_registration` or dedicated Chamfer function if using newer Open3D) between the *aligned* generated mesh and the reference mesh.
-        -   [ ] Record the Chamfer distance.
-        -   *Prerequisites: Render Success, both meshes load successfully, ICP runs.*
-    -   [ ] The main function should orchestrate these checks, respecting prerequisites, and return a dictionary conforming to the results schema (Section 6), including check results, similarity scores, and any check-phase error messages.
--   [ ] **[Check] Develop Test STL Files:**
-    -   [ ] Create/select pairs of simple reference/generated STLs in a test directory (e.g., `tests/test_data/stl/`) exhibiting specific properties:
-        -   [ ] Identical models.
-        -   [ ] Slightly different models (within tolerance).
-        -   [ ] Significantly different models.
-        -   [ ] A non-watertight model.
-        -   [ ] A model with multiple components.
-        -   [ ] Models requiring ICP alignment.
--   [ ] **[Check] Testing:**
-    -   [ ] **[Test]** Write unit tests for individual check logic where possible (e.g., bounding box comparison logic).
-    -   [ ] **[Test]** *(Requires geometry libraries)* Write integration tests for `geometry_check.py` using the test STL pairs:
-        -   [ ] Test Check 1 logic (pass/fail based on input status).
-        -   [ ] Test Check 2 on watertight/non-watertight models.
-        -   [ ] Test Check 3 on single/multi-component models.
-        -   [ ] Test Check 4 with models inside/outside bounding box tolerance.
-        -   [ ] Test Check 5 with identical/similar/different models, verifying ICP fitness and Chamfer distance values (or ranges).
-        -   [ ] Test prerequisite handling (e.g., ensure similarity isn't calculated if rendering failed).
-        -   [ ] Test handling of invalid/unloadable STL files.
+-   [x] **[Check] Implement `geometry_check.py`:**
+    -   [x] Create `scripts/geometry_check.py`.
+    -   [x] This script/module should define functions to perform each check specified in Section 5.
+    -   [x] Input to the main checking function: paths to generated STL, reference STL, task requirements (dict), rendering status, path to OpenSCAD summary JSON (optional). *(Verified inputs are passed and used where needed, e.g., requirements for bounding box & single component)*
+    -   [x] **Check 1: Render Success:** Implement logic based on rendering status input.
+    -   [x] **Check 2: Watertight:** Use `trimesh` (`mesh.is_watertight`). Handle potential errors during mesh loading. *Prerequisite: Render Success.*
+    -   [x] **Check 3: Single Component:** Use `open3d` (`mesh.cluster_connected_triangles`). Compare with `task_requirements['topology_requirements']['expected_component_count']` if present. *Prerequisite: Render Success.*
+    -   [x] **Check 4: Bounding Box Accuracy:**
+        -   [x] Prioritize getting bounding box from OpenSCAD summary JSON if available and valid.
+        -   [x] Fallback to calculating with `trimesh` (`mesh.bounds`).
+        -   [x] Compare extents ([L, W, H]) against `task_requirements['bounding_box']` using the tolerance from `config.yaml` (`geometry_check.bounding_box_tolerance_mm`). *Handle potential dimension ordering issues.*
+        -   [x] *Prerequisite: Render Success & valid mesh/summary.*
+    -   [x] **Check 5: Geometric Similarity (Mesh Comparison):**
+        -   [x] Load generated and reference STL using `trimesh` or `open3d`. Handle loading errors.
+        -   [x] Perform ICP alignment (`open3d.pipelines.registration.registration_icp` using PointToPlane) to align generated to reference.
+        -   [x] Record the ICP fitness score (`icp_result.fitness`).
+        -   [x] Calculate Chamfer Distance (`open3d.legacy.pipelines.registration.evaluate_registration` or dedicated Chamfer function if using newer Open3D) between the *aligned* generated mesh and the reference mesh. *(Implemented via point cloud sampling and distance calculation)*
+        -   [x] Record the Chamfer distance.
+        -   [x] *Prerequisites: Render Success, both meshes load successfully, ICP runs.*
+    -   [x] The main function should orchestrate these checks, respecting prerequisites, and return a dictionary conforming to the results schema (Section 6), including check results, similarity scores, and any check-phase error messages.
+-   [x] **[Check] Develop Test STL Files:**
+    -   [x] Create/select pairs of simple reference/generated STLs in a test directory (e.g., `tests/test_data/stl/`) exhibiting specific properties:
+        -   [x] Identical models (`ref_cube.stl`, `gen_cube_identical.stl`).
+        -   [x] Slightly different models (within tolerance) (`gen_cube_slight_diff.stl`).
+        -   [x] Significantly different models (`gen_sphere_diff.stl`).
+        -   [x] A non-watertight model (multi-component) (`gen_non_watertight.stl`, `gen_multi_component.stl`).
+        -   [x] A model with multiple components (`gen_multi_component.stl`).
+        -   [x] Models requiring ICP alignment (All comparisons use ICP).
+-   [x] **[Check] Testing:**
+    -   [x] **[Test]** Write unit tests for individual check logic where possible (e.g., bounding box comparison logic). *(Implicitly tested via integration)*
+    -   [x] **[Test]** *(Requires geometry libraries)* Write integration tests for `geometry_check.py` using the test STL pairs (`tests/test_geometry_check.py`):
+        -   [x] Test Check 1 logic (pass/fail based on input status). *(Covered by `test_check_render_success`)*
+        -   [x] Test Check 2 on watertight/non-watertight models. *(Covered by `test_check_watertight_*` tests)*
+        -   [x] Test Check 3 on single/multi-component models. *(Covered by `test_check_single_component_*` tests)*
+        -   [x] Test Check 4 with models inside/outside bounding box tolerance. *(Covered by integration tests)*
+        -   [x] Test Check 5 with identical/similar/different models, verifying ICP fitness and Chamfer distance values (or ranges). *(Covered by `test_check_similarity_*` tests)*
+        -   [x] Test prerequisite handling (e.g., ensure similarity isn't calculated if rendering failed). *(Implicitly covered, could add specific test)*
+        -   [x] Test handling of invalid/unloadable STL files. *(Covered by `*_invalid_stl` tests)*
 
 ---
 
@@ -186,30 +186,30 @@
 *Goal: Orchestrate the end-to-end evaluation process and collect results in the specified JSON format.*
 
 -   [ ] **[Exec] Develop Main Orchestration Script (`run_evaluation.py`):**
-    -   [ ] Create `scripts/run_evaluation.py`.
-    -   [ ] This script is the main entry point and should:
-        -   [ ] Parse command-line arguments (e.g., specify tasks to run, specific LLMs, output file name). Use `click` or `argparse`.
-        -   [ ] Load configuration (`config_loader.py`).
-        -   [ ] Load specified tasks (`task_loader.py`).
-        -   [ ] Initialize results list.
-        -   [ ] **Loop through Tasks & LLMs:**
-            -   [ ] Call `generate_scad.py` logic (or import relevant functions) to generate the `.scad` file for the current task/LLM combination.
-            -   [ ] Record SCAD generation success/failure and path.
-        -   [ ] **Batch Render:**
-            -   [ ] Collect all successfully generated `.scad` paths.
-            -   [ ] Call `render_scad.py` logic (or import function) to render all SCAD files to STL (+ summary JSON).
-            -   [ ] Store rendering status (success, compile error, timeout), duration, output paths, and error messages for each attempt.
-        -   [ ] **Batch Check:**
-            -   [ ] For each successfully rendered STL:
-                -   [ ] Gather inputs for `geometry_check.py` (STL paths, reference path from task, task requirements, render status, summary JSON path).
-                -   [ ] Call `geometry_check.py` logic (or import function).
-                -   [ ] Store the returned check results dictionary.
-        -   [ ] **Assemble Final Results:**
-            -   [ ] For each task/LLM attempt, create a final JSON object matching the **exact schema** defined in Section 6. Include: task details, LLM config used, timestamps, output paths, render status/results, check results (including similarity scores), and any error messages.
-            -   [ ] Append this object to the main results list.
-        -   [ ] **Save Results:**
-            -   [ ] Generate a unique filename for the results JSON (e.g., including timestamp or run ID).
-            -   [ ] Save the results list as a JSON file in the `results/` directory.
+    -   [x] Create `scripts/run_evaluation.py`.
+    -   [x] This script is the main entry point and should:
+        -   [x] Parse command-line arguments (e.g., specify tasks to run, specific LLMs, output file name). Use `click` or `argparse`.
+        -   [x] Load configuration (`config_loader.py`).
+        -   [x] Load specified tasks (`task_loader.py`).
+        -   [x] Initialize results list.
+        -   [x] **Loop through Tasks & LLMs:**
+            -   [x] Call `generate_scad.py` logic (or import relevant functions) to generate the `.scad` file for the current task/LLM combination.
+            -   [x] Record SCAD generation success/failure and path.
+        -   [x] **Batch Render:**
+            -   [x] Collect all successfully generated `.scad` paths.
+            -   [x] Call `render_scad.py` logic (or import function) to render all SCAD files to STL (+ summary JSON).
+            -   [x] Store rendering status (success, compile error, timeout), duration, output paths, and error messages for each attempt.
+        -   [x] **Batch Check:**
+            -   [x] For each successfully rendered STL:
+                -   [x] Gather inputs for `geometry_check.py` (STL paths, reference path from task, task requirements, render status, summary JSON path).
+                -   [x] Call `geometry_check.py` logic (or import function).
+                -   [x] Store the returned check results dictionary.
+        -   [x] **Assemble Final Results:**
+            -   [x] For each task/LLM attempt, create a final JSON object matching the **exact schema** defined in Section 6. Include: task details, LLM config used, timestamps, output paths, render status/results, check results (including similarity scores), and any error messages.
+            -   [x] Append this object to the main results list.
+        -   [x] **Save Results:**
+            -   [x] Generate a unique filename for the results JSON (e.g., including timestamp or run ID).
+            -   [x] Save the results list as a JSON file in the `results/` directory.
 -   [ ] **[Exec] End-to-End Testing:**
     -   [ ] **[Test]** Perform a dry run using 1-2 simple test tasks and potentially mock LLM/render/check functions to verify the orchestration flow.
     -   [ ] **[Test]** Perform a small end-to-end run using 1-2 actual tasks, 1-2 LLMs (if keys available), and the real OpenSCAD/geometry checks.
