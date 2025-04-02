@@ -167,53 +167,58 @@ Update logging to include:
 **Inputs:**
 1.  Generated STL Path (`./generated_outputs/{task_id}_{model_name}.stl`).
 2.  Reference STL Path (`./reference/{task_id}.stl`).
-3.  Task Requirements (from YAML).
-4.  OpenSCAD Summary JSON Path (Optional, from step 4.2).
-5.  Rendering Status (from Step 4.2).
+3.  Task Requirements (from YAML, primarily for Check 3).
+4.  Rendering Status (from Step 4.2).
+5.  Configuration (`config.yaml` for tolerances).
 
 **Core Checks (Implemented in `geometry_check.py` using `Trimesh`, `Open3D`):**
 
 1.  **Check 1: Render Success**
     *   **Input:** Rendering status from Step 4.2.
-    *   **Logic:** Did the OpenSCAD rendering complete successfully (return code 0, no critical errors in stderr, no timeout)?
+    *   **Logic:** Did the OpenSCAD rendering complete successfully?
     *   **Output:** `render_successful: true/false`
 
 2.  **Check 2: Topological Integrity - Watertight**
     *   **Input:** Generated STL Path.
-    *   **Logic:** Load mesh (`Trimesh`). Use `mesh.is_watertight`. *Prerequisite: Render must be successful.*
+    *   **Logic:** Load mesh (`Open3D` or `Trimesh`). Check if mesh is watertight/manifold. *Prerequisite: Render Success.*
     *   **Output:** `is_watertight: true/false/null`
 
 3.  **Check 3: Topological Integrity - Single Component**
     *   **Input:** Generated STL Path, Task Requirements (`topology_requirements`).
-    *   **Logic:** Load mesh (`Trimesh`). Use `mesh.body_count`. Check if count is 1 (if `topology_requirements` is true). *Prerequisite: Render must be successful.*
+    *   **Logic:** Load mesh (`Open3D` or `Trimesh`). Count connected components. Compare to `expected_component_count` (default 1) if specified. *Prerequisite: Render Success.*
     *   **Output:** `is_single_component: true/false/null`
 
-4.  **Check 4: Bounding Box Accuracy**
-    *   **Input:** Task Requirements (`bounding_box`), OpenSCAD Summary JSON (preferred), Generated STL.
-    *   **Logic:** Get bounding box extents [L, W, H] (from JSON or `Trimesh`). Compare each dimension against requirements within tolerance (e.g., start with `±0.5mm` absolute).
+4.  **Check 4: Bounding Box Accuracy (Aligned Comparison)**
+    *   **Input:** Generated STL Path, Reference STL Path, ICP Transformation Matrix (from Check 5), Configuration (`geometry_check.bounding_box_tolerance_mm`).
+    *   **Logic:**
+        *   Load both reference and generated meshes (`Trimesh`).
+        *   Apply the ICP transformation matrix (obtained during the similarity check) to the generated mesh.
+        *   Calculate the axis-aligned bounding box (AABB) extents [L, W, H] for the reference mesh and the *aligned* generated mesh.
+        *   Sort the dimensions for both.
+        *   Compare the sorted dimensions element-wise. The check passes if the absolute difference for all dimensions is within the configured tolerance.
+    *   **Prerequisite:** Render Success, Similarity Check Success (to get the transform).
     *   **Output:** `bounding_box_accurate: true/false/null`
 
 5.  **Check 5: Geometric Similarity (Mesh Comparison)**
-    *   **Input:** Generated STL Path, Reference STL Path.
+    *   **Input:** Generated STL Path, Reference STL Path, Configuration (`geometry_check.similarity_threshold_mm`).
     *   **Logic:**
-        *   Load meshes.
-        *   **Alignment:** Perform **Iterative Closest Point (ICP)** alignment (e.g., using `Open3D` with its **default parameters**) to register generated mesh to reference. Record the final **ICP fitness score** (e.g., root mean square error of correspondences). If alignment fitness is poor (above a threshold, e.g., > 1.0), the subsequent distance calculation might be less meaningful.
-        *   **Distance Calculation:** Calculate **Chamfer Distance** between the *aligned* meshes.
-    *   **Prerequisite:** Render success, meshes load. ICP must run, though distance is calculated even if fitness is poor (allowing analysis).
-    *   **Output:** Record the calculated `geometric_similarity_distance` (float) and the `icp_fitness_score` (float). Both will be null if prerequisites fail.
+        *   Load meshes (`Open3D`).
+        *   **Alignment:** Perform **Iterative Closest Point (ICP)** alignment to register generated mesh to reference. Record the final **ICP transformation matrix** and the **ICP fitness score**.
+        *   **Distance Calculation:** Calculate **Chamfer Distance** between the *aligned* generated point cloud and the reference point cloud.
+    *   **Prerequisite:** Render success, meshes load.
+    *   **Output:** Record `geometric_similarity_distance` (float), `icp_fitness_score` (float), and the ICP transformation matrix (used by Check 4). Null if prerequisites fail.
 
 **Execution Logic:**
-- All checks (1-5) will be attempted for each generated model, provided their prerequisites are met.
+- Checks run in order: 1, 2, 3, 5, 4. Check 4 depends on the transform from Check 5.
 
 **Outputs of `geometry_check.py`:**
-*   A dictionary/JSON object per evaluated model, conforming to the schema defined in Section 6, including the calculated similarity distance and ICP fitness score.
+*   A dictionary/JSON object per evaluated model, conforming to the schema defined in Section 6.
 
 **Refinement Notes:**
-*   **Thresholds & Parameters:** Initial tolerance values (bounding box: ±0.5mm) are starting points. **ICP parameters will use library defaults initially.** Geometric similarity will be assessed post-run by comparing the recorded `geometric_similarity_distance` against multiple thresholds (e.g., 0.1mm, 1mm, 10mm) during analysis.
-*   **Alignment:** Successful ICP alignment (indicated by a low `icp_fitness_score`) is critical for interpreting the `geometric_similarity_distance`.
-*   **Libraries:** Recommend `Trimesh` (topology), `Open3D` (ICP, Chamfer).
-*   **Focus:** Checks prioritize geometric/topological correctness. Check 5 provides a quantitative measure of shape fidelity.
-*   **Pre-processing:** Assume models generated at correct scale.
+*   **Tolerances:** Bounding box and similarity distance tolerances are defined in `config.yaml`.
+*   **Alignment:** Successful ICP alignment (high `icp_fitness_score`) is crucial for meaningful `geometric_similarity_distance` and the aligned bounding box check.
+*   **Libraries:** Primarily uses `Trimesh` and `Open3D`.
+*   **Focus:** Checks prioritize basic validity (render, watertight, components) and geometric fidelity (similarity distance, aligned bounding box).
 
 ---
 
