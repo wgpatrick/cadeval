@@ -11,6 +11,10 @@ import sys
 import json
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
+import logging
+from scipy.spatial.transform import Rotation as R
+from tenacity import retry, stop_after_attempt, wait_fixed
+import tempfile # For temporary directory
 
 # Attempt imports for geometry libraries, provide guidance if missing
 try:
@@ -39,6 +43,24 @@ from scripts.config_loader import get_config, Config, ConfigError
 # Initialize logger for this module
 logger = get_logger(__name__)
 
+# Define DEFAULT_CONFIG with default values for checks
+DEFAULT_CONFIG = {
+    'bounding_box_tolerance': 1.0, # Default tolerance in mm
+    'similarity_threshold': 1.0, # Default Chamfer distance threshold
+    # Add other default config values as needed
+}
+
+# Environment variable to control debug output
+SAVE_PCD_FOR_DEBUG = os.environ.get('SAVE_PCD_FOR_DEBUG', 'false').lower() == 'true'
+# --- Define output directory within the project ---
+PROJECT_ROOT = os.path.abspath(os.path.dirname(os.path.dirname(__file__))) # Assumes script is in a subdir
+DEBUG_PCD_DIR = os.path.join(PROJECT_ROOT, "debug_output", "similarity_pcd")
+# ---
+
+if SAVE_PCD_FOR_DEBUG:
+    os.makedirs(DEBUG_PCD_DIR, exist_ok=True)
+    print(f"--- DEBUG: Saving intermediate PCD files to {DEBUG_PCD_DIR} ---") # Updated path
+
 class GeometryCheckError(Exception):
     """Exception raised for errors during geometry checks."""
     pass
@@ -51,50 +73,148 @@ def check_render_success(render_status: str) -> bool:
     # Simple check based on the status string from the render step
     return render_status == "Success"
 
-def check_watertight(stl_path: str) -> Tuple[Optional[bool], Optional[str]]:
-    """Check 2: Check if the mesh is watertight using Trimesh."""
-    logger.debug(f"Checking watertightness for: {stl_path}")
+def clean_mesh_for_checks(mesh: o3d.geometry.TriangleMesh, logger: logging.Logger, filename: str) -> o3d.geometry.TriangleMesh:
+    """Applies cleaning steps relevant for watertight/component checks."""
     try:
-        mesh = trimesh.load(stl_path, force='mesh')
-        is_watertight = bool(mesh.is_watertight)
-        logger.debug(f"  Result: {is_watertight}")
-        return is_watertight, None
-    except ValueError as e:
-        # Handle common trimesh loading errors (e.g., empty file, not mesh)
-        error_msg = f"Failed to load mesh for watertight check: {e}"
-        logger.warning(error_msg)
-        return None, error_msg
+        initial_vertices = len(mesh.vertices)
+        initial_triangles = len(mesh.triangles)
+        # Merge close vertices - essential for fixing small gaps
+        mesh.merge_close_vertices(0.0001)
+        # Optional: remove other potential issues (can sometimes create problems)
+        mesh.remove_degenerate_triangles()
+        mesh.remove_duplicated_vertices()
+        mesh.remove_duplicated_triangles()
+        mesh.remove_unreferenced_vertices()
+        final_vertices = len(mesh.vertices)
+        final_triangles = len(mesh.triangles)
+        if initial_vertices != final_vertices or initial_triangles != final_triangles:
+            logger.debug(f"Cleaned mesh {filename}: Vertices {initial_vertices}->{final_vertices}, Triangles {initial_triangles}->{final_triangles}")
+        return mesh
     except Exception as e:
-        error_msg = f"Unexpected error during watertight check: {e}"
-        logger.error(error_msg)
-        return None, error_msg
+        logger.warning(f"Error during mesh cleaning for {filename}: {e}")
+        return mesh # Return original mesh if cleaning fails
 
-def check_single_component(stl_path: str, requirements: Dict[str, Any]) -> Tuple[Optional[bool], Optional[str]]:
-    """Check 3: Check if the mesh consists of a single connected component."""
-    logger.debug(f"Checking single component for: {stl_path}")
-    
-    # Default assumption if not specified in requirements
-    expected_count = requirements.get('topology_requirements', {}).get('expected_component_count', 1)
-    logger.debug(f"  Expected component count: {expected_count}")
+def check_single_component(
+    mesh_file: str,
+    requirements: Dict[str, Any], # Add requirements input
+    logger: logging.Logger
+) -> tuple[bool, str | None]:
+    """
+    Check if the mesh consists of the expected number of connected components.
+    Defaults to expecting 1 component if not specified in requirements.
+    Returns (bool, error_msg | None).
+    """
+    if not os.path.exists(mesh_file):
+        error_msg = f"Mesh file not found: {mesh_file}"
+        logger.error(error_msg)
+        return False, error_msg
+
+    # --- Determine expected component count ---
+    expected_components = 1 # Default to 1
+    try:
+        if 'topology_requirements' in requirements and \
+           isinstance(requirements['topology_requirements'], dict) and \
+           'expected_component_count' in requirements['topology_requirements']:
+            expected_components = int(requirements['topology_requirements']['expected_component_count'])
+            logger.debug(f"Expecting {expected_components} component(s) based on requirements.")
+        else:
+            logger.debug("No expected component count in requirements, defaulting to 1.")
+    except (ValueError, TypeError) as e:
+        logger.warning(f"Invalid format for expected_component_count in requirements ({e}), defaulting to 1.")
+        expected_components = 1
+    # ---
 
     try:
-        mesh = trimesh.load(stl_path, force='mesh')
-        # Split the mesh into potentially disconnected bodies
-        components = mesh.split()
-        body_count = len(components)
-        logger.debug(f"  Detected component count: {body_count}")
-        
-        is_correct_count = (body_count == expected_count)
-        return is_correct_count, None
-        
-    except ValueError as e:
-        error_msg = f"Failed to load mesh for single component check: {e}"
-        logger.warning(error_msg)
-        return None, error_msg
+        mesh = o3d.io.read_triangle_mesh(mesh_file)
+        if not mesh.has_triangles():
+            error_msg = f"Mesh file {mesh_file} is empty or could not be loaded."
+            logger.warning(error_msg)
+            return False, error_msg
+
+        # --- Attempt cleaning ---
+        mesh = clean_mesh_for_checks(mesh, logger, os.path.basename(mesh_file))
+        if not mesh.has_triangles(): # Re-check after cleaning
+             error_msg = f"Mesh {mesh_file} became empty after cleaning."
+             logger.warning(error_msg)
+             return False, error_msg
+        # --- End cleaning ---
+
+        triangle_clusters, cluster_n_triangles, _ = mesh.cluster_connected_triangles()
+        num_components = len(cluster_n_triangles)
+        logger.debug(f"File: {mesh_file} (Post-Clean), Found components: {num_components}")
+
+        # --- Compare against expected count ---
+        passes_check = num_components == expected_components
+        # ---
+
+        if not passes_check:
+            error_msg = f"Found {num_components} components, expected {expected_components}"
+            logger.info(f"Component count check for {mesh_file}: FAILED ({error_msg})")
+            return False, error_msg
+        else:
+            logger.info(f"Component count check for {mesh_file}: PASSED (Found {num_components}, Expected {expected_components})")
+            return True, None
     except Exception as e:
-        error_msg = f"Unexpected error during single component check: {e}"
+        error_msg = f"Error checking single component for {mesh_file}: {e}"
+        logger.error(error_msg, exc_info=True)
+        return False, error_msg
+
+def check_watertight(mesh_file: str, logger: logging.Logger) -> tuple[bool, str | None]:
+    """
+    Check if the mesh is watertight (manifold) AND consists of a single connected component.
+    Returns (bool, error_msg | None).
+    """
+    if not os.path.exists(mesh_file):
+        error_msg = f"Mesh file not found: {mesh_file}"
         logger.error(error_msg)
-        return None, error_msg
+        return False, error_msg
+
+    try:
+        mesh = o3d.io.read_triangle_mesh(mesh_file)
+        if not mesh.has_triangles():
+            error_msg = f"Mesh file {mesh_file} is empty or could not be loaded."
+            logger.warning(error_msg)
+            return False, error_msg
+
+        # --- Attempt cleaning ---
+        mesh = clean_mesh_for_checks(mesh, logger, os.path.basename(mesh_file))
+        if not mesh.has_triangles(): # Re-check after cleaning
+             error_msg = f"Mesh {mesh_file} became empty after cleaning."
+             logger.warning(error_msg)
+             return False, error_msg
+        # --- End cleaning ---
+
+        # Check 1: Manifold edges (Open3D's definition)
+        logger.debug(f"Checking manifold status for {mesh_file} (Post-Clean)...")
+        is_manifold = mesh.is_watertight()
+        logger.debug(f"File: {mesh_file} (Post-Clean), o3d.is_watertight() result: {is_manifold}")
+        if not is_manifold:
+            try:
+                edges = mesh.get_non_manifold_edges(allow_boundary_edges=False)
+                logger.warning(f"Found {len(edges)} non-manifold edges in {mesh_file} (Post-Clean).")
+            except Exception as edge_ex:
+                 logger.warning(f"Could not get non-manifold edge info for {mesh_file} (Post-Clean): {edge_ex}")
+            error_msg = "Mesh is not manifold (non-watertight edges found)"
+            logger.info(f"Watertight (manifold edge) check for {mesh_file}: FAILED")
+            return False, error_msg
+
+        # Check 2: Single connected component
+        triangle_clusters, cluster_n_triangles, _ = mesh.cluster_connected_triangles()
+        num_components = len(cluster_n_triangles)
+        logger.debug(f"File: {mesh_file} (Post-Clean), Found components: {num_components}")
+        is_single_component = num_components == 1
+
+        if not is_single_component:
+             error_msg = f"Mesh has multiple components ({num_components})"
+             logger.info(f"Watertight (single component) check for {mesh_file}: FAILED ({error_msg})")
+             return False, error_msg
+
+        logger.info(f"Watertight check (manifold and single component) for {mesh_file}: PASSED")
+        return True, None
+    except Exception as e:
+        error_msg = f"Error checking watertightness for {mesh_file}: {e}"
+        logger.error(error_msg, exc_info=True)
+        return False, error_msg
 
 def check_bounding_box(
     generated_stl_path: str, 
@@ -192,103 +312,154 @@ def check_bounding_box(
                 break # No need to check further dims
         
         logger.debug(f"  Bounding box accuracy result: {is_accurate}")
-        return is_accurate, None
+        if not is_accurate:
+            error_msg = f"BoundingBoxCheck: Extent diff {np.abs(np.array(calculated_dims_sorted) - np.array(target_dims_sorted))} exceeds tolerance {tolerance}"
+            return is_accurate, error_msg
+        else:
+            return is_accurate, None
     else:
-        # Should not happen if logic is correct, but safeguard
-        return None, f"{error_prefix} Failed to obtain calculated dimensions."
+        error_msg = f"{error_prefix} Failed to obtain calculated dimensions."
+        return False, error_msg
 
-def check_similarity(
-    generated_stl_path: str, 
-    reference_stl_path: str
-) -> Tuple[Optional[float], Optional[float], Optional[str]]:
-    """Check 5: Calculate geometric similarity using ICP and Chamfer Distance.
-
-    Returns: 
-        Tuple(icp_fitness_score, chamfer_distance, error_message)
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+def check_similarity(generated_stl_path: str, reference_stl_path: str, threshold: float, logger: logging.Logger) -> tuple[bool, float | None, str | None]:
     """
-    logger.debug(f"Checking similarity between {generated_stl_path} and {reference_stl_path}")
-    error_prefix = "SimilarityCheck:"
-    icp_fitness = None
-    chamfer_distance = None
-
-    # Default parameters for ICP and Chamfer
-    # Using default ICP parameters as specified in the plan
-    icp_threshold = 1.0 # Default correspondence distance threshold for ICP
-    icp_criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=2000) # Default criteria
-    number_of_points_for_chamfer = 5000 # Number of points to sample for Chamfer
+    Performs ICP alignment and calculates Chamfer distance.
+    
+    Note on implementation choices (Post-Debugging):
+    - Dense point cloud sampling (~50k points) is crucial for accurate ICP on simple shapes.
+    - Point-to-Plane ICP estimation generally performs well with dense clouds.
+    - Chamfer distance calculation requires careful handling of point correspondences.
+    - Comparing identical file paths is handled as a special case (returns 0.0 distance).
+    
+    Retries on failure. Returns (is_similar: bool, distance: float | None, error_msg: str | None).
+    """
+    # Ensure file existence checks are done early
+    if not os.path.exists(generated_stl_path): return False, None, f"Generated file not found: {generated_stl_path}"
+    if not os.path.exists(reference_stl_path): return False, None, f"Reference file not found: {reference_stl_path}"
+    
+    # Special case - if the files are identical (same path), we can skip ICP and report near-zero distance
+    # This acts as a sanity check to ensure our comparison logic is sound
+    if os.path.samefile(generated_stl_path, reference_stl_path):
+        logger.debug(f"Files are identical (same path), returning zero distance")
+        return True, 0.0, None
 
     try:
-        # 1. Load meshes
-        try:
-            logger.debug("  Loading reference mesh...")
-            mesh_ref = o3d.io.read_triangle_mesh(reference_stl_path)
-            if not mesh_ref.has_vertices() or not mesh_ref.has_triangles():
-                 raise ValueError("Reference mesh is empty or invalid after loading.")
-            logger.debug("  Reference mesh loaded.")
-        except Exception as e:
-            return None, None, f"{error_prefix} Failed to load reference mesh ({reference_stl_path}): {e}"
-            
-        try:
-             logger.debug("  Loading generated mesh...")
-             mesh_gen = o3d.io.read_triangle_mesh(generated_stl_path)
-             if not mesh_gen.has_vertices() or not mesh_gen.has_triangles():
-                 raise ValueError("Generated mesh is empty or invalid after loading.")
-             logger.debug("  Generated mesh loaded.")
-        except Exception as e:
-            return None, None, f"{error_prefix} Failed to load generated mesh ({generated_stl_path}): {e}"
+        run_id = f"{os.path.basename(generated_stl_path)}_vs_{os.path.basename(reference_stl_path)}".replace('.stl', '')
 
-        # 2. Perform ICP Alignment (align generated mesh to reference mesh)
-        logger.debug("  Performing ICP alignment...")
-        # Ensure meshes have normals computed for robust ICP
-        mesh_gen.compute_vertex_normals()
-        mesh_ref.compute_vertex_normals()
-        
-        # Initial guess: identity matrix
-        init_transform = np.identity(4)
-        
-        # Run ICP
+        logger.debug(f"Loading meshes for similarity check: {generated_stl_path} vs {reference_stl_path}")
+        generated_mesh = o3d.io.read_triangle_mesh(generated_stl_path)
+        reference_mesh = o3d.io.read_triangle_mesh(reference_stl_path)
+        if not generated_mesh.has_triangles(): return False, None, "Generated mesh has no triangles"
+        if not reference_mesh.has_triangles(): return False, None, "Reference mesh has no triangles"
+
+        generated_mesh.compute_vertex_normals()
+        reference_mesh.compute_vertex_normals()
+        logger.debug("Normals computed.")
+
+        # --- Save Original Meshes if Debugging ---
+        if SAVE_PCD_FOR_DEBUG:
+            o3d.io.write_triangle_mesh(os.path.join(DEBUG_PCD_DIR, f"{run_id}_ref_mesh.ply"), reference_mesh)
+            o3d.io.write_triangle_mesh(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_mesh.ply"), generated_mesh)
+        # ---
+
+        # --- Determine Number of Points for Sampling ---
+        # Increase the target significantly
+        N_POINTS_TARGET = 50000 # Let's target 50,000 points
+        logger.debug(f"Targeting {N_POINTS_TARGET} points for uniform sampling.")
+
+        # Check if meshes are valid before sampling
+        if not generated_mesh.has_triangles() or not reference_mesh.has_triangles():
+            return False, None, "Cannot sample points from empty mesh"
+        # ---
+
+        logger.debug(f"Sampling up to {N_POINTS_TARGET} points from each mesh...")
+        # Sample points uniformly.
+        gen_pcd = generated_mesh.sample_points_uniformly(number_of_points=N_POINTS_TARGET)
+        ref_pcd = reference_mesh.sample_points_uniformly(number_of_points=N_POINTS_TARGET)
+
+        # Check if sampling actually produced enough points
+        min_actual_points = 100
+        actual_gen_points = len(gen_pcd.points)
+        actual_ref_points = len(ref_pcd.points)
+        logger.info(f"Actual points sampled: Gen={actual_gen_points}, Ref={actual_ref_points}")
+
+        if actual_gen_points < min_actual_points or actual_ref_points < min_actual_points:
+            warning_msg = (f"Sampling produced very few points (Gen: {actual_gen_points}, Ref: {actual_ref_points}). "
+                           f"Similarity check might be inaccurate.")
+            logger.warning(warning_msg)
+            if actual_gen_points == 0 or actual_ref_points == 0:
+                 return False, None, "Sampling produced zero points."
+            # Proceed even with few points, but warning issued.
+
+        # --- Save Sampled PCDs if Debugging ---
+        if SAVE_PCD_FOR_DEBUG:
+             o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_ref_sampled.ply"), ref_pcd)
+             o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_sampled.ply"), gen_pcd)
+        # ---
+
+        # --- Determine ICP Threshold ---
+        icp_correspondence_threshold = 1.0 # Fixed value for now
+        logger.debug(f"Using ICP correspondence threshold: {icp_correspondence_threshold}")
+        logger.debug(f"Final Chamfer distance threshold: {threshold}")
+        # --- End ICP Threshold Determination ---
+
+        # --- Initial Alignment ---
+        center_gen = gen_pcd.get_center()
+        center_ref = ref_pcd.get_center()
+        initial_transform = np.identity(4)
+        initial_transform[0:3, 3] = center_ref - center_gen
+        logger.debug(f"Initial transformation (translation): {initial_transform[0:3, 3]}")
+        gen_pcd_initial_aligned = gen_pcd.transform(initial_transform)
+
+        # --- Save Initially Aligned PCD if Debugging ---
+        if SAVE_PCD_FOR_DEBUG:
+             o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_initial_aligned.ply"), gen_pcd_initial_aligned)
+        # ---
+
+        logger.debug(f"Performing ICP registration with max_correspondence_distance={icp_correspondence_threshold}...")
         reg_p2p = o3d.pipelines.registration.registration_icp(
-            mesh_gen, mesh_ref, icp_threshold, init_transform,
-            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-            icp_criteria
+            gen_pcd, ref_pcd, # Use original gen_pcd for registration source
+            max_correspondence_distance=icp_correspondence_threshold,
+            init=initial_transform, # Provide the initial alignment
+            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=200)
         )
-        
-        icp_fitness = reg_p2p.fitness # Proportion of inliers
-        # Lower rmse is generally better, but fitness score (0-1) is often used
-        # Let's record fitness as per the plan, RMSE might also be useful: reg_p2p.inlier_rmse
-        logger.debug(f"  ICP Fitness: {icp_fitness:.4f}")
-        # Apply the transformation to align the generated mesh
-        mesh_gen_aligned = mesh_gen.transform(reg_p2p.transformation)
-        logger.debug("  Generated mesh aligned.")
+        logger.debug(f"ICP Result (PointToPlane): Fitness={reg_p2p.fitness:.6f}, InlierRMSE={reg_p2p.inlier_rmse:.6f}")
 
-        # 3. Calculate Chamfer Distance
-        logger.debug(f"  Calculating Chamfer distance using {number_of_points_for_chamfer} sampled points...")
-        # Sample points from both meshes
-        pcd_ref = mesh_ref.sample_points_poisson_disk(number_of_points=number_of_points_for_chamfer)
-        pcd_gen_aligned = mesh_gen_aligned.sample_points_poisson_disk(number_of_points=number_of_points_for_chamfer)
-        
-        if not pcd_ref.has_points() or not pcd_gen_aligned.has_points():
-             raise ValueError("Failed to sample sufficient points for Chamfer distance calculation.")
+        gen_pcd_transformed = gen_pcd.transform(reg_p2p.transformation)
 
-        # Compute distances between point clouds
-        dist_gen_to_ref = pcd_gen_aligned.compute_point_cloud_distance(pcd_ref)
-        dist_ref_to_gen = pcd_ref.compute_point_cloud_distance(pcd_gen_aligned)
-        
-        # Calculate Chamfer distance (average of mean squared distances)
-        chamfer_l1 = np.mean(dist_gen_to_ref) + np.mean(dist_ref_to_gen)
-        # Or L2 (sum of mean squared distances) - L1 is more common as 'Chamfer'
-        # chamfer_l2 = np.mean(np.square(dist_gen_to_ref)) + np.mean(np.square(dist_ref_to_gen))
-        
-        chamfer_distance = chamfer_l1 
-        logger.debug(f"  Chamfer Distance (L1): {chamfer_distance:.4f}")
+        logger.debug("Calculating Chamfer distance...")
+        dist_gen_to_ref = np.asarray(gen_pcd_transformed.compute_point_cloud_distance(ref_pcd))
+        dist_ref_to_gen = np.asarray(ref_pcd.compute_point_cloud_distance(gen_pcd_transformed))
 
-        return icp_fitness, chamfer_distance, None
+        mean_gen_to_ref = np.mean(dist_gen_to_ref)
+        mean_ref_to_gen = np.mean(dist_ref_to_gen)
+        max_gen_to_ref = np.max(dist_gen_to_ref)
+        max_ref_to_gen = np.max(dist_ref_to_gen)
+        std_gen_to_ref = np.std(dist_gen_to_ref)
+        std_ref_to_gen = np.std(dist_ref_to_gen)
+
+        logger.debug(f"Distances Gen->Ref: mean={mean_gen_to_ref:.6f}, max={max_gen_to_ref:.6f}, std={std_gen_to_ref:.6f}")
+        logger.debug(f"Distances Ref->Gen: mean={mean_ref_to_gen:.6f}, max={max_ref_to_gen:.6f}, std={std_ref_to_gen:.6f}")
+
+        chamfer_distance = (mean_gen_to_ref + mean_ref_to_gen) / 2.0
+        logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f}")
+
+        is_similar = chamfer_distance <= threshold # Compare against the original threshold param
+        if is_similar:
+             logger.debug("--- Similarity Check PASSED ---")
+             return True, chamfer_distance, None
+        else:
+             error_msg = f"Chamfer distance {chamfer_distance:.4f} exceeds threshold {threshold}"
+             logger.debug(f"--- Similarity Check FAILED: {error_msg} ---")
+             return False, chamfer_distance, error_msg
 
     except Exception as e:
-        error_msg = f"Unexpected error during similarity check: {e}"
-        logger.error(error_msg)
-        # Return current values (might have ICP fitness even if Chamfer fails)
-        return icp_fitness, chamfer_distance, f"{error_prefix} {error_msg}"
+        error_msg = f"Error during similarity check between {generated_stl_path} and {reference_stl_path}: {e}"
+        logger.error(error_msg, exc_info=True)
+        logger.debug(f"--- Similarity Check ERRORED ---")
+        return False, None, error_msg
 
 
 # --- Main Orchestration Function --- 
@@ -351,43 +522,65 @@ def perform_geometry_checks(
         return check_results # Cannot proceed without the generated STL
         
     # Check 2: Watertight
-    is_watertight, wt_error = check_watertight(generated_stl_path)
-    check_results["check_is_watertight"] = is_watertight
-    if wt_error: check_results["check_errors"].append(f"WatertightCheck: {wt_error}")
-    can_load_mesh = (wt_error is None or "Failed to load mesh" not in wt_error)
+    is_watertight = None
+    try:
+        is_watertight, watertight_error = check_watertight(generated_stl_path, logger)
+        check_results["check_is_watertight"] = is_watertight
+        if watertight_error: # Add error message if it exists
+            check_results["check_errors"].append(f"WatertightCheck: {watertight_error}")
+    except Exception as e:
+        logger.error(f"Unhandled error calling check_watertight: {e}", exc_info=True)
+        check_results["check_is_watertight"] = False # Mark as failed on exception
+        check_results["check_errors"].append(f"WatertightCheck: Unhandled Exception - {e}")
 
     # Check 3: Single Component
-    if can_load_mesh:
-         is_single, sc_error = check_single_component(generated_stl_path, task_requirements)
-         check_results["check_is_single_component"] = is_single
-         if sc_error: check_results["check_errors"].append(f"SingleComponentCheck: {sc_error}")
-    else:
-         logger.warning("Skipping single component check due to mesh load failure.")
-         check_results["check_errors"].append("SingleComponentCheck: Skipped due to mesh load error.")
+    try:
+        # Pass task_requirements to the check function
+        is_single, single_error = check_single_component(
+            generated_stl_path,
+            task_requirements, # Pass requirements here
+            logger
+        )
+        check_results["check_is_single_component"] = is_single
+        if single_error: # Add error message if it exists
+            check_results["check_errors"].append(f"SingleComponentCheck: {single_error}")
+    except Exception as e:
+        logger.error(f"Unhandled error calling check_single_component: {e}", exc_info=True)
+        check_results["check_is_single_component"] = False # Mark as failed on exception
+        check_results["check_errors"].append(f"SingleComponentCheck: Unhandled Exception - {e}")
 
     # Check 4: Bounding Box
-    summary_json_path = rendering_info.get("summary_path") # Get path from render results
-    is_bbox_accurate, bbox_error = check_bounding_box(
-        generated_stl_path, 
-        summary_json_path, 
-        task_requirements, 
-        config
-    )
-    check_results["check_bounding_box_accurate"] = is_bbox_accurate
-    if bbox_error: check_results["check_errors"].append(bbox_error) # Error already prefixed
+    summary_json_path = rendering_info.get("summary_path")
+    try:
+        is_bbox_accurate, bbox_error = check_bounding_box(
+            generated_stl_path,
+            summary_json_path,
+            task_requirements,
+            config
+        )
+        check_results["check_bounding_box_accurate"] = is_bbox_accurate
+        if bbox_error:
+            check_results["check_errors"].append(bbox_error)
+    except Exception as e:
+        logger.error(f"Unhandled error calling check_bounding_box: {e}", exc_info=True)
+        check_results["check_bounding_box_accurate"] = False # Mark as failed
 
     # Check 5: Geometric Similarity
     if not reference_stl_path or not os.path.exists(reference_stl_path):
-         logger.warning(f"Reference STL file not found at {reference_stl_path}, skipping similarity check.")
-         check_results["check_errors"].append(f"SimilarityCheck: Reference STL not found ({reference_stl_path}).")
-    elif can_load_mesh: # Check if generated mesh could be loaded
-        icp_score, chamfer_dist, sim_error = check_similarity(generated_stl_path, reference_stl_path)
-        check_results["icp_fitness_score"] = icp_score
-        check_results["geometric_similarity_distance"] = chamfer_dist
-        if sim_error: check_results["check_errors"].append(sim_error)
+        check_results["check_errors"].append(f"SimilarityCheck: Reference STL not found ({reference_stl_path}).")
+    elif is_watertight is not False: # Run if watertight is True or None (i.e., didn't explicitly fail)
+        try: # Add try-except block
+            threshold = config.get('similarity_threshold', DEFAULT_CONFIG['similarity_threshold'])
+            is_similar, chamfer_dist, sim_error = check_similarity(generated_stl_path, reference_stl_path, threshold, logger)
+            check_results["icp_fitness_score"] = is_similar
+            check_results["geometric_similarity_distance"] = chamfer_dist
+            if sim_error: # Add error message if it exists and check passed
+                check_results["check_errors"].append(f"SimilarityCheck: {sim_error}")
+        except Exception as e:
+            logger.error(f"Unhandled error calling check_similarity: {e}", exc_info=True)
     else:
-        logger.warning("Skipping similarity check due to generated mesh load failure.")
-        check_results["check_errors"].append("SimilarityCheck: Skipped due to mesh load error.")
+        logger.warning("Skipping similarity check due to prior watertight/load failure.")
+        check_results["check_errors"].append("SimilarityCheck: Skipped due to prior watertight/load failure.")
         
     logger.info(f"Geometry checks completed for: {os.path.basename(generated_stl_path)}")
     return check_results

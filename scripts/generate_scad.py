@@ -120,6 +120,7 @@ def generate_scad_for_task(
     result = {
         "task_id": task_id,
         "model": model_identifier,
+        "model_config_used": model_config,
         "timestamp": datetime.now().isoformat(),
         "success": False,
         "output_path": None,
@@ -136,6 +137,7 @@ def generate_scad_for_task(
         prompt = format_prompt(description, prompt_params)
         logger.info(f"Formatted prompt for task '{task_id}' using {provider}/{model_name}")
         logger.debug(f"Prompt: {prompt}")
+        result["prompt_used"] = prompt
     except Exception as e:
         error_msg = f"Error formatting prompt for task '{task_id}': {str(e)}"
         logger.error(error_msg)
