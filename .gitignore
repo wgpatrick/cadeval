@@ -58,7 +58,9 @@ venv.bak/
 # Project Specific Output/Temporary Files (from TODO.md & context)
 generated_outputs/
 results/
-logs/ # Added based on previous example, often useful
+logs/
+    debug_output/
+    *.log
 temp/ # Added based on previous example
 
 # Secrets (from TODO.md)
@@ -84,3 +86,4 @@ Thumbs.db
 *.swo
 
 requirements.txt
+requirements-dev.txt

@@ -1,5 +1,5 @@
 task_id: "task8" # e.g., widget_01, bracket_complex_v2
-description: "This is a 20mm x 20mm x 80 mm box. All 12 edges of the box have a 1mm fillet."
+description: "This is a 20mm x 20mm x 80 mm solid rectangular prism. All 12 edges of the solid have a 1mm fillet."
 reference_stl: "./reference/task8.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [20,20,80] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.

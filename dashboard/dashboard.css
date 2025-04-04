@@ -1,0 +1,100 @@
+/* General Styles */
+body {
+    font-family: sans-serif;
+    margin: 20px;
+    background-color: #f8f9fa;
+    color: #333;
+}
+
+h1, h2 {
+    color: #444;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 5px;
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+h2 {
+    margin-top: 30px;
+    margin-bottom: 15px;
+}
+
+/* Loading/Error Indicators */
+#loading-indicator, #error-indicator {
+    text-align: center;
+    font-size: 1.2em;
+    padding: 20px;
+    display: none; /* Hidden by default */
+}
+
+#error-indicator {
+    color: #dc3545; /* Bootstrap danger color */
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 5px;
+}
+
+/* Chart Styles */
+#charts-container {
+    display: none; /* Hidden until data loads */
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: space-around;
+    margin-bottom: 30px;
+}
+
+.chart-wrapper {
+    flex: 1 1 300px; /* Allow charts to grow/shrink, base size 300px */
+    min-width: 280px;
+    max-width: 400px; /* Prevent charts from getting too wide */
+    height: 300px; /* Fixed height for consistency */
+    background-color: #fff;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* AG-Grid Styles */
+#grids-container {
+    /* Grids will be added here by JS */
+}
+
+.ag-theme-alpine {
+    /* Uses autoHeight, so no fixed height needed here */
+    margin-bottom: 30px; /* Space below each grid */
+     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+     border-radius: 8px;
+     overflow: hidden; /* Ensures rounded corners apply to header */
+}
+
+
+/* Custom Cell Styling */
+.cell-status-container {
+    display: flex;
+    align-items: center; /* Vertically center icon and text */
+    height: 100%;
+}
+
+.status-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle; /* Helps alignment if needed */
+}
+
+.status-success {
+    background-color: #28a745; /* Bootstrap success green */
+}
+
+.status-failure {
+    background-color: #dc3545; /* Bootstrap danger red */
+}
+
+.status-na {
+    background-color: #adb5bd; /* Bootstrap secondary gray */
+} 

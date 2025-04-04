@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CadEval Dashboard</title>
+
+    <!-- AG-Grid CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-grid.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-theme-alpine.css" />
+
+    <!-- Link to external CSS -->
+    <link rel="stylesheet" href="dashboard.css">
+
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- AG-Grid Library -->
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community/dist/ag-grid-community.min.js"></script>
+
+</head>
+<body>
+    <h1 id="run-id">CadEval Dashboard - Loading...</h1>
+
+    <!-- Loading and Error Indicators -->
+    <div id="loading-indicator">Loading dashboard data...</div>
+    <div id="error-indicator"></div>
+
+    <!-- Summary Charts -->
+    <div id="charts-container">
+        <div class="chart-wrapper">
+            <canvas id="successRateChart"></canvas>
+        </div>
+        <div class="chart-wrapper">
+            <canvas id="checksPassedChart"></canvas>
+        </div>
+        <div class="chart-wrapper">
+            <canvas id="avgSimilarityChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Detailed Results Grids -->
+    <div id="grids-container">
+        <!-- Grids will be populated here by JavaScript -->
+    </div>
+
+    <!-- Link to external JavaScript -->
+    <script src="dashboard.js" defer></script>
+
+</body>
+</html>
