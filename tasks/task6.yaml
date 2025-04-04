@@ -1,0 +1,13 @@
+task_id: "task6" # e.g., widget_01, bracket_complex_v2
+description: "This is a rectangular plate with a single hole with a counterbore. 
+
+The rectangular prism is 20mm wide and 40mm long with 5mm thickness.
+
+The hole is 4mm in diameter. Looking down at the plate the centerpoint of the circle is 5mm from one of the long edges and its centered in the other direction (10mm from either side). 
+
+The counterbore is 8mm in diameter and is cut 2mm down into the plate."
+reference_stl: "./reference/task6.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [40,20,5] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.

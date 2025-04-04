@@ -1,0 +1,13 @@
+task_id: "task2" # e.g., widget_01, bracket_complex_v2
+description: "This is a 3mm thickness rectangular plate. The plate is 18mm x 32mm in dimension. 
+
+When looking down at the plate, it has two holes that are drilled through it. 
+
+In the bottom left of the plate, there’s a hole with a centerpoint that is 3mm from the short (18mm) side and 3 mm from the long (32mm) side. This hole has a diameter of 2mm
+
+In roughly the top left corner of plate, there’s a hole of diameter 3mm. It’s center point is 8mm from the short side (18mm side) and 6mm away from the long (32mm) side."
+reference_stl: "./reference/task2.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [32,18,3] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.

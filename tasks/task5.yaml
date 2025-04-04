@@ -1,0 +1,7 @@
+task_id: "task5" # e.g., widget_01, bracket_complex_v2
+description: "This is a rectangular prism (a 50x50mm square extruded by 100mm) that has a half-circle (diameter 25mm) channel on one of the 4 long sides of the prism."
+reference_stl: "./reference/task5.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [50,50,100] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.

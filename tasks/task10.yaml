@@ -1,0 +1,9 @@
+task_id: "task10" # e.g., widget_01, bracket_complex_v2
+description: "A square face swept along a half circle path to create a rainbow-like arc. The outer diameter of the rainbow is 130mm and the inner diameter is 70mm.
+
+The square is 30mm x 30 mm. The half circle path is 100mm in diameter. And the center point of the square is along the path."
+reference_stl: "./reference/task10.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [65,130,30] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
