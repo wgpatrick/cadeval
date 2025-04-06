@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CadEval Dashboard</title>
 
-    <!-- AG-Grid CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-grid.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community/styles/ag-theme-alpine.css" />
+    <!-- AG-Grid CSS (Local) -->
+    <!-- <link rel="stylesheet" href="./ag-grid.css" /> -->
+    <!-- <link rel="stylesheet" href="./ag-theme-alpine.css" /> -->
 
     <!-- Link to external CSS -->
     <link rel="stylesheet" href="dashboard.css">
@@ -15,12 +15,16 @@
     <!-- Chart.js Library -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <!-- AG-Grid Library -->
-    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community/dist/ag-grid-community.min.js"></script>
+    <!-- AG-Grid Library (Local) -->
+    <!-- <script src="./ag-grid-community.min.js"></script> -->
+    <!-- AG-Grid Library (CDN) -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/ag-grid-community/dist/ag-grid-community.min.noStyle.js"></script> -->
 
 </head>
 <body>
     <h1 id="run-id">CadEval Dashboard - Loading...</h1>
+
+    <!-- File Input Removed -->
 
     <!-- Loading and Error Indicators -->
     <div id="loading-indicator">Loading dashboard data...</div>
@@ -45,7 +49,7 @@
     </div>
 
     <!-- Link to external JavaScript -->
-    <script src="dashboard.js" defer></script>
+    <script src="dashboard.js"></script>
 
 </body>
 </html>

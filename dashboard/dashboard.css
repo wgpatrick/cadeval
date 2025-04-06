@@ -97,4 +97,55 @@ h2 {
 
 .status-na {
     background-color: #adb5bd; /* Bootstrap secondary gray */
+}
+
+/* Basic Table Styling */
+.results-table {
+    width: 100%;
+    border-collapse: collapse; /* Remove space between borders */
+    margin-bottom: 20px; /* Space between tables */
+    font-size: 0.9em; /* Adjust font size */
+    box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+}
+
+.results-table th,
+.results-table td {
+    border: 1px solid #ddd; /* Light grey border */
+    padding: 8px 12px; /* Padding inside cells */
+    text-align: left; /* Align text to the left */
+    vertical-align: middle; /* Center content vertically */
+}
+
+.results-table th {
+    background-color: #f2f2f2; /* Light grey background for header */
+    font-weight: bold;
+    position: sticky; /* Make header sticky if table scrolls */
+    top: 0;
+    z-index: 1;
+}
+
+.results-table tbody tr:nth-child(even) {
+    background-color: #f9f9f9; /* Zebra striping for rows */
+}
+
+.results-table tbody tr:hover {
+    background-color: #f1f1f1; /* Highlight row on hover */
+}
+
+/* Styling for boolean status cells (based on classes added in JS) */
+.results-table td.status-success,
+.results-table td.status-yes {
+    background-color: #d4edda;
+    font-weight: normal;
+}
+
+.results-table td.status-failure,
+.results-table td.status-no {
+    background-color: #f8d7da;
+    font-weight: normal;
+}
+
+.results-table td.status-na {
+    background-color: #e2e3e5;
+    font-style: italic;
 } 

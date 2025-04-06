@@ -7,13 +7,41 @@ import statistics
 from collections import defaultdict
 import re # For extracting run ID
 import logging
+import sys # Import sys
+
+# --- Add project root to sys.path --- Start ---
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+# --- Add project root to sys.path --- End ---
+
+# Now these imports should work when the script is run directly
+from scripts.logger_setup import get_logger, setup_logger
+from scripts.config_loader import get_config, Config, ConfigError
 
 # Setup basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def process_individual_result(result_entry):
+# Initialize logger for this module
+logger = get_logger(__name__)
+
+# Define DEFAULT_CONFIG with default values for checks nested under 'geometry_check'
+DEFAULT_CONFIG = {
+    'geometry_check': {
+        'bounding_box_tolerance_mm': 1.0,
+        'similarity_threshold_mm': 1.0,
+    }
+}
+
+def process_individual_result(result_entry, config: Config):
     """Processes a single entry from the results.json list."""
     processed = result_entry.copy() # Start with original data
+
+    # Get similarity threshold from config or use default
+    similarity_threshold = config.get(
+        'geometry_check.similarity_threshold_mm',
+        DEFAULT_CONFIG['geometry_check']['similarity_threshold_mm']
+    )
 
     # Initialize flags and statuses
     scad_generation_success = False
@@ -38,75 +66,82 @@ def process_individual_result(result_entry):
         processed['render_success'] = False
         processed['render_status_detail'] = "N/A (SCAD Fail)"
 
-
-    # 3. Geometry Check Orchestration Success
-    # Checks should only run if rendering was successful and there wasn't a check orchestration error
-    if render_success:
-        check_error = result_entry.get("check_error")
-        geometry_check_orchestration_success = check_error is None
-        processed['geometry_check_orchestration_success'] = geometry_check_orchestration_success
-        processed['geometry_check_error_detail'] = check_error # Store potential error message
-    else:
-        processed['geometry_check_orchestration_success'] = False
-        processed['geometry_check_error_detail'] = None # No error if it didn't run
-
-    # 4. Individual Geometry Checks Passed & Statuses
-    checks_data = result_entry.get("checks", {})
+    # 3. Geometry Check Orchestration Success & Individual Statuses
+    checks_data = result_entry.get("checks")
     check_keys_expected = ["check_render_successful", "check_is_watertight", "check_is_single_component", "check_bounding_box_accurate"] # Define expected keys
 
-    if geometry_check_orchestration_success and checks_data is not None:
-        # If checks_data is None (JSON null), treat as failed orchestration
-        if checks_data is None:
-            logging.warning(f"Task {result_entry.get('task_id')}/{result_entry.get('model_name')}: 'checks' field is null despite successful render & no check_error.")
-            processed['geometry_check_orchestration_success'] = False
-            geometry_check_orchestration_success = False # Update local flag too
-            all_individual_checks_passed = False
-            # Set all expected checks to N/A due to this inconsistency
-            for key in check_keys_expected:
-                 individual_check_statuses[key] = "N/A (Null Checks)"
+    # Initialize
+    geometry_check_orchestration_success = False
+    all_individual_checks_passed = False
+    individual_check_statuses = {}
 
-        elif isinstance(checks_data, dict):
-            all_passed_flag = True
-            found_any_check = False
-            for key in check_keys_expected:
-                check_result = checks_data.get(key) # Use .get() to handle missing keys gracefully
-                individual_check_statuses[key] = check_result # Store True, False, or None
-                if check_result is not None:
-                    found_any_check = True
-                # A check only passes if it's explicitly True
-                if check_result is not True:
-                    all_passed_flag = False
-            # Only consider "all passed" if the orchestration succeeded AND we found at least one check result
-            all_individual_checks_passed = all_passed_flag and found_any_check
-        else:
-             # checks_data is not a dict or None, indicates an issue
-             logging.warning(f"Task {result_entry.get('task_id')}/{result_entry.get('model_name')}: 'checks' field has unexpected type: {type(checks_data)}. Treating as check failure.")
-             processed['geometry_check_orchestration_success'] = False
-             geometry_check_orchestration_success = False # Update local flag
-             all_individual_checks_passed = False
-             for key in check_keys_expected:
-                  individual_check_statuses[key] = "N/A (Bad Type)"
+    if render_success and isinstance(checks_data, dict):
+        # Orchestration succeeded if render was OK and 'checks' is a dictionary
+        geometry_check_orchestration_success = True
 
-    else: # Checks didn't run or orchestration failed
-        all_individual_checks_passed = False
-        status_reason = "N/A (Orchestration Fail)" if render_success else "N/A (Render Fail)"
+        # Directly populate statuses from the checks_data dictionary
+        all_passed_flag = True
+        found_any_check = False # Track if we found at least one check result
         for key in check_keys_expected:
-            individual_check_statuses[key] = status_reason # Indicate why they weren't evaluated
+            check_result = checks_data.get(key) # Handles missing keys gracefully -> None
+            individual_check_statuses[key] = check_result # Store True, False, or None directly
+            if check_result is not None:
+                found_any_check = True
+            if check_result is not True: # Any non-True (False or None) means not all passed
+                all_passed_flag = False
 
+        # Consider 'all passed' only if orchestration succeeded AND we found at least one check result
+        all_individual_checks_passed = all_passed_flag and found_any_check
+
+    elif render_success and checks_data is None:
+        # Handle case where 'checks' key exists but is explicitly null in the JSON
+        logging.warning(f"Task {result_entry.get('task_id', 'N/A')}: 'checks' field is null despite successful render. Treating as check failure.")
+        geometry_check_orchestration_success = False # Orchestration failed if checks is null
+        all_individual_checks_passed = False
+        for key in check_keys_expected:
+            individual_check_statuses[key] = "N/A (Null Checks)"
+
+    elif render_success and checks_data is not None:
+        # Handle case where 'checks' key exists but is not a dictionary (unexpected type)
+        logging.warning(f"Task {result_entry.get('task_id', 'N/A')}: 'checks' field has unexpected type: {type(checks_data)}. Treating as check failure.")
+        geometry_check_orchestration_success = False # Orchestration failed due to bad type
+        all_individual_checks_passed = False
+        for key in check_keys_expected:
+            individual_check_statuses[key] = "N/A (Bad Type)"
+
+    else: # Render failed, so checks couldn't run
+        geometry_check_orchestration_success = False
+        all_individual_checks_passed = False
+        for key in check_keys_expected:
+            individual_check_statuses[key] = "N/A (Render Fail)"
+
+    processed['geometry_check_orchestration_success'] = geometry_check_orchestration_success
     processed['individual_geometry_checks_passed'] = all_individual_checks_passed
     processed['individual_check_statuses'] = individual_check_statuses
 
-    # 5. Overall Pipeline Success (Recalculate based on potentially updated flags)
+    # Store the check error detail separately, regardless of orchestration success
+    processed['geometry_check_error_detail'] = result_entry.get("check_error")
+
+    # --- Similarity Check for Overall Success ---
+    similarity_passes = False
+    similarity_distance = result_entry.get('geometric_similarity_distance')
+    if similarity_distance is not None:
+        try:
+            similarity_passes = float(similarity_distance) <= similarity_threshold
+        except (ValueError, TypeError):
+            similarity_passes = False # Treat invalid distance as failure
+
+    # 4. Overall Pipeline Success (Recalculate based on flags INCLUDING similarity)
     overall_pipeline_success = (scad_generation_success and
                               render_success and
                               geometry_check_orchestration_success and
-                              all_individual_checks_passed)
+                              all_individual_checks_passed and # Passes all boolean checks
+                              similarity_passes) # Passes similarity threshold
     processed['overall_pipeline_success'] = overall_pipeline_success
 
     # Format similarity distance
     sim_dist = processed.get('geometric_similarity_distance')
     processed['similarity_distance_detail'] = f"{sim_dist:.4f}" if sim_dist is not None else "N/A"
-
 
     return processed
 
@@ -227,12 +262,24 @@ def main():
          logging.error(f"An unexpected error occurred reading the input file: {e}")
          return
 
+    # --- Load Config --- Added config loading here ---
+    try:
+        config = get_config() # Load from default config.yaml
+    except ConfigError as e:
+        logging.warning(f"Configuration error: {e}. Using default check values.")
+        # Create a dummy config object that will return defaults
+        config = Config(DEFAULT_CONFIG)
+    except Exception as e:
+         logging.warning(f"Unexpected error loading config: {e}. Using default check values.")
+         config = Config(DEFAULT_CONFIG)
+    # --- End Load Config ---
 
     # Process each result entry
     processed_results_list = []
     for i, entry in enumerate(raw_results):
         try:
-             processed_results_list.append(process_individual_result(entry))
+             # Pass config to the processing function
+             processed_results_list.append(process_individual_result(entry, config))
         except Exception as e:
              task_id = entry.get('task_id', 'unknown')
              model_name = entry.get('model_name', 'unknown')

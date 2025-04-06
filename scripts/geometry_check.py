@@ -15,6 +15,7 @@ import logging
 from scipy.spatial.transform import Rotation as R
 from tenacity import retry, stop_after_attempt, wait_fixed
 import tempfile # For temporary directory
+import copy # Add copy import
 
 # Attempt imports for geometry libraries, provide guidance if missing
 try:
@@ -185,6 +186,36 @@ def check_watertight(mesh_file: str, logger: logging.Logger) -> tuple[bool, str 
         logger.error(error_msg, exc_info=True)
         return False, error_msg
 
+# --- Helper Function for Preprocessing (Downsample + FPFH) ---
+# Copied from visualize_comparison.py
+def preprocess(pcd, voxel_size, logger):
+    """Preprocesses point cloud: downsamples, estimates normals, computes FPFH."""
+    logger.debug(f"    Preprocessing: Downsampling with voxel size {voxel_size}...")
+    try:
+        pcd_down = pcd.voxel_down_sample(voxel_size)
+        if not pcd_down.has_points():
+             logger.warning("    Preprocessing: Downsampling resulted in zero points.")
+             return None, None
+        logger.debug(f"    Preprocessing: Estimating normals...")
+        # Increased radius/nn slightly for potentially sparse downsampled clouds
+        pcd_down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 2.5, max_nn=35))
+        if not pcd_down.has_normals():
+             logger.warning("    Preprocessing: Normal estimation failed.")
+             # Attempt FPFH anyway, might work depending on Open3D version/implementation
+             # return None, None # Stricter: Fail if normals fail
+        logger.debug(f"    Preprocessing: Computing FPFH features...")
+        fpfh = o3d.pipelines.registration.compute_fpfh_feature(
+                  pcd_down,
+                  o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 5, max_nn=100))
+        if fpfh is None or not hasattr(fpfh, 'data') or fpfh.data.shape[1] == 0:
+             logger.warning("    Preprocessing: FPFH computation failed or produced empty features.")
+             return pcd_down, None # Return downsampled cloud even if features fail
+        logger.debug(f"    Preprocessing: Done.")
+        return pcd_down, fpfh
+    except Exception as e:
+        logger.error(f"    Preprocessing: Error during preprocessing: {e}", exc_info=True)
+        return None, None
+
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def check_similarity(
     generated_stl_path: str,
@@ -193,7 +224,8 @@ def check_similarity(
     logger: logging.Logger
 ) -> tuple[float | None, float | None, np.ndarray | None, str | None]:
     """
-    Check 5: Performs ICP alignment and calculates Chamfer distance.
+    Check 5: Performs alignment using Global Reg (FPFH+RANSAC) + ICP Refinement
+    and calculates Chamfer distance.
     Returns (chamfer_distance, icp_fitness, transformation_matrix, error_msg).
     """
     if not os.path.exists(generated_stl_path): return None, None, None, f"Generated file not found: {generated_stl_path}"
@@ -204,7 +236,9 @@ def check_similarity(
         identity_transform = np.identity(4)
         return 0.0, 1.0, identity_transform, None
 
-    transformation_matrix = None
+    final_transformation_matrix = None # Initialize the final matrix
+    icp_refinement_fitness = None # Fitness score specifically from ICP refinement
+
     try:
         run_id = f"{os.path.basename(generated_stl_path)}_vs_{os.path.basename(reference_stl_path)}".replace('.stl', '')
         logger.debug(f"Loading meshes for similarity check: {generated_stl_path} vs {reference_stl_path}")
@@ -213,8 +247,9 @@ def check_similarity(
         if not generated_mesh.has_triangles(): return None, None, None, "Generated mesh has no triangles"
         if not reference_mesh.has_triangles(): return None, None, None, "Reference mesh has no triangles"
 
-        generated_mesh.compute_vertex_normals()
-        reference_mesh.compute_vertex_normals()
+        # Ensure normals are computed for sampling/potential later use
+        if not generated_mesh.has_vertex_normals(): generated_mesh.compute_vertex_normals()
+        if not reference_mesh.has_vertex_normals(): reference_mesh.compute_vertex_normals()
 
         if SAVE_PCD_FOR_DEBUG:
             o3d.io.write_triangle_mesh(os.path.join(DEBUG_PCD_DIR, f"{run_id}_ref_mesh.ply"), reference_mesh)
@@ -244,69 +279,110 @@ def check_similarity(
              o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_ref_sampled.ply"), ref_pcd)
              o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_sampled.ply"), gen_pcd)
 
-        # ICP parameters
-        icp_correspondence_threshold = 1.0 # Threshold distance for correspondences
-        logger.debug(f"Using ICP correspondence threshold: {icp_correspondence_threshold}")
-        logger.debug(f"Using Chamfer distance similarity threshold: {threshold} mm")
+        # --- Global Alignment (FPFH + RANSAC) ---
+        # NOTE: voxel_size is critical and scale-dependent. Needs tuning. 5.0 is a starting guess.
+        voxel_size = 5.0
+        logger.debug(f"Starting Global Registration Preprocessing (Voxel Size: {voxel_size})...")
+        gen_pcd_down, fpfh_gen = preprocess(gen_pcd, voxel_size, logger)
+        ref_pcd_down, fpfh_ref = preprocess(ref_pcd, voxel_size, logger)
 
-        # Initial alignment (center alignment)
-        center_gen = gen_pcd.get_center()
-        center_ref = ref_pcd.get_center()
-        initial_transform = np.identity(4)
-        initial_transform[0:3, 3] = center_ref - center_gen
+        # Check if preprocessing was successful enough
+        if gen_pcd_down is None or fpfh_gen is None or ref_pcd_down is None or fpfh_ref is None:
+            error_msg = "Preprocessing for RANSAC failed (check logs for details), skipping alignment."
+            logger.error(error_msg)
+            # Cannot proceed with alignment, but maybe can calculate distance on unaligned clouds?
+            # For now, return error. Consider fallback later if needed.
+            return None, None, None, error_msg
+
+        distance_thresh = voxel_size * 1.5 # RANSAC correspondence threshold
+        logger.debug(f"Running RANSAC Global Registration (Distance Threshold: {distance_thresh})...")
+        ransac_result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
+            source=gen_pcd_down, target=ref_pcd_down,
+            source_feature=fpfh_gen, target_feature=fpfh_ref,
+            mutual_filter=True,
+            max_correspondence_distance=distance_thresh,
+            estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(False), # Scale=False
+            ransac_n=4, # Typically 3 or 4
+            checkers=[], # Optional geometric checks can be added
+            criteria=o3d.pipelines.registration.RANSACConvergenceCriteria(100000, 0.999) # Iterations, Confidence
+        )
+        T_ransac = ransac_result.transformation # Initial transformation from RANSAC
+        logger.info(f"Global Registration RANSAC Fitness: {ransac_result.fitness:.6f}")
+        logger.info(f"Global Registration RANSAC Inlier RMSE: {ransac_result.inlier_rmse:.6f}")
+
+        # Apply initial transform to the *original resolution* generated point cloud
+        # Use deepcopy to avoid modifying the original gen_pcd
+        gen_pcd_globally_aligned = copy.deepcopy(gen_pcd).transform(T_ransac)
 
         if SAVE_PCD_FOR_DEBUG:
-             gen_pcd_initial_aligned = o3d.geometry.PointCloud(gen_pcd) # Create copy
-             gen_pcd_initial_aligned.transform(initial_transform)
-             o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_initial_aligned.ply"), gen_pcd_initial_aligned)
+             o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_ransac_aligned.ply"), gen_pcd_globally_aligned)
 
-        logger.debug(f"Performing ICP registration...")
-        reg_p2p = o3d.pipelines.registration.registration_icp(
-            source=gen_pcd, # Point cloud to be transformed
-            target=ref_pcd, # Reference point cloud
-            max_correspondence_distance=icp_correspondence_threshold,
-            init=initial_transform, # Initial guess
+        # --- ICP Refinement ---
+        icp_refinement_threshold = 1.5 # Threshold for *refinement* stage, can be smaller than RANSAC's
+        logger.debug(f"Performing ICP Refinement (Max Corr Dist: {icp_refinement_threshold}, Max Iter: 200)...")
+
+        # Refine the alignment between the globally aligned gen cloud and the original ref cloud
+        icp_result = o3d.pipelines.registration.registration_icp(
+            source=gen_pcd_globally_aligned, # Source = globally aligned cloud
+            target=ref_pcd, # Target = original reference cloud
+            max_correspondence_distance=icp_refinement_threshold,
+            init=np.identity(4), # Initial transform for refinement is Identity (already globally aligned)
             estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
             criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=200)
         )
-        icp_fitness_score = reg_p2p.fitness
-        transformation_matrix = reg_p2p.transformation
-        logger.debug(f"ICP Result: Fitness={icp_fitness_score:.6f}, InlierRMSE={reg_p2p.inlier_rmse:.6f}")
+        T_icp_refine = icp_result.transformation # Transformation from the ICP refinement step
+        icp_refinement_fitness = icp_result.fitness # Capture fitness from this step
+        logger.info(f"ICP Refinement Fitness: {icp_refinement_fitness:.6f}, ICP Refinement Inlier RMSE: {icp_result.inlier_rmse:.6f}")
 
-        # Apply final transformation to generated point cloud for distance calc
-        gen_pcd_transformed = o3d.geometry.PointCloud(gen_pcd) # Create copy
-        gen_pcd_transformed.transform(transformation_matrix)
+        # Calculate the final combined transformation matrix
+        # This matrix transforms the *original* gen_pcd to the *final* aligned position
+        final_transformation_matrix = T_icp_refine @ T_ransac
+
+        # Apply the *final* transformation to the *original* generated point cloud for distance calculation
+        gen_pcd_final_aligned = copy.deepcopy(gen_pcd).transform(final_transformation_matrix)
 
         if SAVE_PCD_FOR_DEBUG:
-             o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_final_aligned.ply"), gen_pcd_transformed)
+             o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_final_aligned.ply"), gen_pcd_final_aligned)
 
-        # Calculate Chamfer distance
-        logger.debug("Calculating Chamfer distance...")
-        dist_gen_to_ref = np.asarray(gen_pcd_transformed.compute_point_cloud_distance(ref_pcd))
-        dist_ref_to_gen = np.asarray(ref_pcd.compute_point_cloud_distance(gen_pcd_transformed))
-        chamfer_distance = (np.mean(dist_gen_to_ref) + np.mean(dist_ref_to_gen)) / 2.0
-        logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f} mm, ICP Fitness = {icp_fitness_score:.6f}")
+        # Calculate Chamfer distance using the final aligned point cloud
+        logger.debug("Calculating Chamfer distance on final aligned clouds...")
+        dist_gen_to_ref = np.asarray(gen_pcd_final_aligned.compute_point_cloud_distance(ref_pcd))
+        dist_ref_to_gen = np.asarray(ref_pcd.compute_point_cloud_distance(gen_pcd_final_aligned))
+
+        # Handle potential empty distance arrays if compute_point_cloud_distance fails
+        if dist_gen_to_ref.size == 0 or dist_ref_to_gen.size == 0:
+             logger.warning("Chamfer distance calculation resulted in empty arrays. Check point clouds.")
+             chamfer_distance = np.inf # Or some other indicator of failure
+        else:
+             chamfer_distance = (np.mean(dist_gen_to_ref) + np.mean(dist_ref_to_gen)) / 2.0
+
+        logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f} mm, ICP Refinement Fitness = {icp_refinement_fitness:.6f}")
 
         error_msg = None
         if chamfer_distance > threshold:
+             # This is just a note, not necessarily a failure of the check function itself
              error_msg = f"Chamfer distance {chamfer_distance:.4f} mm exceeds threshold {threshold} mm"
-             # This is just a note, not necessarily a failure of the check itself
+             logger.info(f"SimilarityCheck Note: {error_msg}") # Log exceedance as info
 
-        return chamfer_distance, icp_fitness_score, transformation_matrix, error_msg
+        # Return chamfer dist, ICP *refinement* fitness, the *final combined* transform, and potential threshold error msg
+        return chamfer_distance, icp_refinement_fitness, final_transformation_matrix, error_msg
+
     except Exception as e:
         error_msg = f"Error during similarity check between {generated_stl_path} and {reference_stl_path}: {e}"
         logger.error(error_msg, exc_info=True)
+        # Return None for metrics and the error message
         return None, None, None, error_msg
 
 def compare_aligned_bounding_boxes(
     generated_stl_path: str,
     reference_stl_path: str,
-    icp_transform: np.ndarray,
+    final_transform: np.ndarray, # Renamed parameter to reflect it's the final one
     config: Config,
     logger: logging.Logger
 ) -> Tuple[Optional[bool], Optional[str]]:
     """
-    Check 4: Compares the bounding box of the ICP-aligned generated mesh against the reference mesh.
+    Check 4: Compares the bounding box of the fully aligned generated mesh against the reference mesh.
+    Uses the final transformation matrix from the similarity check (RANSAC + ICP).
     Returns (is_accurate, error_message)
     """
     error_prefix = "AlignedBBoxCheck:"
@@ -325,23 +401,23 @@ def compare_aligned_bounding_boxes(
         gen_mesh = trimesh.load(generated_stl_path, force='mesh')
         if not gen_mesh.vertices.size > 0: raise ValueError("Generated mesh empty")
 
-        # Apply transform and get its sorted dimensions
-        gen_mesh.apply_transform(icp_transform)
+        # Apply the *final* combined transform and get its sorted dimensions
+        gen_mesh.apply_transform(final_transform) # Use the final transform
         aligned_gen_dims_sorted = sorted(gen_mesh.bounding_box.extents)
-        logger.debug(f"    Aligned Gen BBox Dims (Sorted): {[f'{d:.4f}' for d in aligned_gen_dims_sorted]}")
+        logger.debug(f"    Final Aligned Gen BBox Dims (Sorted): {[f'{d:.4f}' for d in aligned_gen_dims_sorted]}")
 
-        # Compare dimensions (Reference vs Aligned Generated)
+        # Compare dimensions (Reference vs Final Aligned Generated)
         is_accurate = True
         diffs = np.abs(np.array(aligned_gen_dims_sorted) - np.array(ref_dims_sorted))
         for i in range(3):
             if diffs[i] > tolerance:
                 is_accurate = False
-                logger.debug(f"    Dimension mismatch (Ref vs Aligned): ref={ref_dims_sorted[i]:.4f}, aligned_gen={aligned_gen_dims_sorted[i]:.4f}, diff={diffs[i]:.4f}, tol={tolerance}")
+                logger.debug(f"    Dimension mismatch (Ref vs Final Aligned): ref={ref_dims_sorted[i]:.4f}, aligned_gen={aligned_gen_dims_sorted[i]:.4f}, diff={diffs[i]:.4f}, tol={tolerance}")
                 break # No need to check further dims
 
         logger.debug(f"  Aligned bounding box accuracy result: {is_accurate}")
         if not is_accurate:
-            error_msg = f"{error_prefix} Aligned vs Ref BBox Dims Diff (Sorted): {[f'{d:.4f}' for d in diffs.tolist()]} exceeds tolerance {tolerance}"
+            error_msg = f"{error_prefix} Final Aligned vs Ref BBox Dims Diff (Sorted): {[f'{d:.4f}' for d in diffs.tolist()]} exceeds tolerance {tolerance}"
             return is_accurate, error_msg
         else:
             return is_accurate, None
@@ -381,7 +457,7 @@ def perform_geometry_checks(
         "check_errors": [] # Store errors encountered during checks
     }
 
-    icp_transform = None # Variable to store transform from Check 5
+    final_transform = None # Variable to store transform from Check 5
 
     # --- Execute Checks ---
 
@@ -442,34 +518,32 @@ def perform_geometry_checks(
             similarity_threshold_value = config.get(similarity_key, default_sim_thresh)
             similarity_threshold_value = float(similarity_threshold_value)
 
-            chamfer_dist, icp_fitness, icp_transform, sim_error = check_similarity(
+            chamfer_dist, icp_fitness, final_transform, sim_error = check_similarity(
                  generated_stl_path,
                  reference_stl_path,
                  similarity_threshold_value, # Pass the float threshold
                  logger
             )
             check_results["geometric_similarity_distance"] = chamfer_dist
-            check_results["icp_fitness_score"] = icp_fitness
+            check_results["icp_fitness_score"] = icp_fitness # This is now ICP refinement fitness
 
             if sim_error:
                 # Only record as error if it's not just exceeding threshold
                 if "exceeds threshold" not in sim_error:
                      check_results["check_errors"].append(f"SimilarityCheck Error: {sim_error}")
-                     icp_transform = None # Don't trust transform if similarity calc failed
-                else:
-                    # Log threshold exceedance as info/debug, not error that stops bbox check
-                    logger.info(f"SimilarityCheck Note: {sim_error}")
+                     final_transform = None # Don't trust transform if similarity calc failed
+                # else: Threshold exceedance is logged within check_similarity now
 
         except (ConfigError, ValueError, TypeError) as e:
              logger.error(f"Invalid configuration for key '{similarity_key}': {e}", exc_info=True)
              check_results["check_errors"].append(f"SimilarityCheck: Invalid threshold config - {e}")
-             icp_transform = None # Cannot proceed
+             final_transform = None # Cannot proceed
         except Exception as e:
             logger.error(f"Unhandled error calling check_similarity: {e}", exc_info=True)
             check_results["check_errors"].append(f"SimilarityCheck: Unhandled Exception - {e}")
             check_results["geometric_similarity_distance"] = None
             check_results["icp_fitness_score"] = None
-            icp_transform = None # Ensure transform is None on error
+            final_transform = None # Ensure transform is None on error
 
     else: # Watertight check failed explicitly
         logger.warning("Skipping similarity check and aligned bbox check due to prior watertight/load failure.")
@@ -477,13 +551,13 @@ def perform_geometry_checks(
         check_results["check_bounding_box_accurate"] = None
 
     # Check 4: Bounding Box (Aligned vs Reference)
-    # Runs only if ICP transform was successfully obtained in Check 5
-    if icp_transform is not None:
+    # Runs only if final_transform was successfully obtained in Check 5
+    if final_transform is not None: # Check the renamed variable
          try:
              is_bbox_accurate, bbox_error = compare_aligned_bounding_boxes(
                  generated_stl_path,
                  reference_stl_path,
-                 icp_transform,
+                 final_transform, # Pass the final transform
                  config,
                  logger
              )
@@ -498,7 +572,7 @@ def perform_geometry_checks(
             logger.error(f"Unhandled error during aligned bounding box check: {e}", exc_info=True)
             check_results["check_bounding_box_accurate"] = None # Indicate failure/error
             check_results["check_errors"].append(f"AlignedBBoxCheck: Unhandled Exception - {e}")
-    # Else: check_results["check_bounding_box_accurate"] remains None because icp_transform was None
+    # Else: check_results["check_bounding_box_accurate"] remains None because final_transform was None
 
     logger.info(f"Geometry checks completed for: {os.path.basename(generated_stl_path)}")
     # Add check_results_valid flag? Or rely on None values? Let's rely on None for now.
