@@ -118,7 +118,7 @@ def assemble_final_results(
         render_info = render_results_map.get(scad_path) if scad_path else None
         check_info = check_results_map.get(scad_path) if scad_path else None
 
-        # --- Initialize the final entry ---\
+        # --- Initialize the final entry --- Add new fields
         final_entry = {
             "task_id": task_id,
             "model_name": model_config_used.get("name"),
@@ -134,32 +134,37 @@ def assemble_final_results(
             "timestamp_utc": gen_result.get("timestamp"),
             "output_scad_path": None,
             "output_stl_path": None,
-            "output_summary_json_path": None, # TODO: Consider moving summary JSONs too
+            "output_summary_json_path": None,
             "render_status": None,
             "render_duration_seconds": None,
             "render_error_message": None,
-            "checks": {
+            "checks": { # Add new check flags here
                 "check_render_successful": None,
                 "check_is_watertight": None,
                 "check_is_single_component": None,
-                "check_bounding_box_accurate": None
+                "check_bounding_box_accurate": None,
+                "check_volume_passed": None, # New
+                "check_hausdorff_passed": None # New
             },
-            "geometric_similarity_distance": None,
+            "geometric_similarity_distance": None, # Chamfer
             "icp_fitness_score": None,
+            "hausdorff_99p_distance": None, # New
+            "reference_volume_mm3": None, # New
+            "generated_volume_mm3": None, # New
+            "reference_bbox_mm": None, # New
+            "generated_bbox_aligned_mm": None, # New
             "generation_error": gen_result.get("error") if not gen_result.get("success") else None,
-            "check_error": None # Placeholder for check errors
+            "check_error": None # Consolidated check errors
         }
 
-        # --- Populate from Task Info (if available) ---\
+        # --- Populate from Task Info (if available) ---
         if task_info:
             task_data = task_info.get("task_data", {})
             final_entry["task_description"] = task_data.get("description")
             # Keep reference STL path relative to project root as defined in YAML
             final_entry["reference_stl_path"] = task_data.get("reference_stl")
 
-        # --- Populate Paths (Relative to Project Root) ---\
-        # The generated paths (scad_path, stl_path, summary_path) are now absolute
-        # We still want to store them relative to the project root in the results JSON
+        # --- Populate Paths (Relative to Project Root) ---
         if scad_path and os.path.isabs(scad_path):
              try: final_entry["output_scad_path"] = os.path.relpath(scad_path, project_root)
              except ValueError: final_entry["output_scad_path"] = scad_path # Fallback if different drive etc.
@@ -183,23 +188,39 @@ def assemble_final_results(
             final_entry["render_duration_seconds"] = render_info.get("duration")
             final_entry["render_error_message"] = render_info.get("error")
 
-        # --- Populate from Check Info (if available) ---\
+        # --- Populate from Check Info (if available) --- Update population logic
         if check_info:
             check_run_error = check_info.get("error") # Check for orchestrator/setup errors stored
-            check_internal_errors = check_info.get("check_errors", []) # Check for errors within checks
+            check_internal_errors = check_info.get("check_errors", []) # Check for errors within individual checks
 
-            if check_run_error or not check_info.get("check_results_valid", True):
-                logger.warning(f"Check results for {os.path.basename(scad_path or 'UNKNOWN')} are marked as invalid or failed during setup. Error: {check_run_error or check_internal_errors}")
-                final_entry["check_error"] = check_run_error or "; ".join(check_internal_errors)
-            else:
-                final_entry["checks"]["check_render_successful"] = check_info.get("check_render_successful")
-                final_entry["checks"]["check_is_watertight"] = check_info.get("check_is_watertight")
-                final_entry["checks"]["check_is_single_component"] = check_info.get("check_is_single_component")
-                final_entry["checks"]["check_bounding_box_accurate"] = check_info.get("check_bounding_box_accurate")
-                final_entry["geometric_similarity_distance"] = check_info.get("geometric_similarity_distance")
-                final_entry["icp_fitness_score"] = check_info.get("icp_fitness_score")
-                if check_internal_errors:
-                     final_entry["check_error"] = "; ".join(check_internal_errors)
+            # Combine all errors
+            all_errors = []
+            if check_run_error: all_errors.append(check_run_error)
+            if check_internal_errors: all_errors.extend(check_internal_errors)
+            if all_errors:
+                final_entry["check_error"] = "; ".join(all_errors)
+                logger.warning(f"Check issues for {os.path.basename(scad_path or 'UNKNOWN')}: {final_entry['check_error']}")
+
+            # Populate boolean checks from the sub-dictionary if available
+            checks_sub_dict = check_info.get("checks", {})
+            # Explicitly handle boolean/None assignment AND ensure Python bool type
+            for check_key in final_entry["checks"]:
+                check_value = checks_sub_dict.get(check_key)
+                if check_value is None:
+                    final_entry["checks"][check_key] = None
+                else:
+                    # This converts any truthy value (including numpy.bool_(True)) to True,
+                    # and any falsy value (including numpy.bool_(False)) to False.
+                    final_entry["checks"][check_key] = bool(check_value)
+
+            # Populate metric values
+            final_entry["geometric_similarity_distance"] = check_info.get("geometric_similarity_distance")
+            final_entry["icp_fitness_score"] = check_info.get("icp_fitness_score")
+            final_entry["hausdorff_99p_distance"] = check_info.get("hausdorff_99p_distance") # New
+            final_entry["reference_volume_mm3"] = check_info.get("reference_volume_mm3") # New
+            final_entry["generated_volume_mm3"] = check_info.get("generated_volume_mm3") # New
+            final_entry["reference_bbox_mm"] = check_info.get("reference_bbox_mm") # New
+            final_entry["generated_bbox_aligned_mm"] = check_info.get("generated_bbox_aligned_mm") # New
 
         final_results_list.append(final_entry)
 

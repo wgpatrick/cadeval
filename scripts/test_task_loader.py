@@ -10,18 +10,13 @@ import tempfile
 import shutil
 import yaml
 import json
-import pytest
-from unittest.mock import patch, mock_open
-from pydantic import ValidationError
 
 # Add the parent directory to the path for imports
 parent_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# Adjusted import relative to project root
-from scripts.task_loader import load_tasks, TaskLoadError, load_schema, validate_task
-from scripts.config_loader import Config, get_config # Assuming get_config loads schema path
+from .task_loader import load_tasks, TaskLoadError, load_schema, validate_task
 
 # Disable logging for tests to keep output clean
 import logging

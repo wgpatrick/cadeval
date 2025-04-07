@@ -44,8 +44,13 @@ def setup_logger(
     # Create formatter
     formatter = logging.Formatter(log_format)
     
-    # Clear any existing handlers
-    logger.handlers = []
+    # Clear any existing handlers safely
+    for handler in logger.handlers[:]:
+        # Optionally close handler before removing?
+        # try: handler.close() 
+        # except Exception: pass
+        logger.removeHandler(handler)
+    # logger.handlers = [] # Avoid direct assignment
     
     # Add console handler if requested
     if console:

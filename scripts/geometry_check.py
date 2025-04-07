@@ -222,30 +222,31 @@ def check_similarity(
     reference_stl_path: str,
     threshold: float,
     logger: logging.Logger
-) -> tuple[float | None, float | None, np.ndarray | None, str | None]:
+) -> tuple[float | None, float | None, np.ndarray | None, float | None, str | None]:
     """
     Check 5: Performs alignment using Global Reg (FPFH+RANSAC) + ICP Refinement
-    and calculates Chamfer distance.
-    Returns (chamfer_distance, icp_fitness, transformation_matrix, error_msg).
+    and calculates Chamfer distance and 99th percentile Hausdorff distance.
+    Returns (chamfer_distance, icp_fitness, transformation_matrix, hausdorff_99p, error_msg).
     """
-    if not os.path.exists(generated_stl_path): return None, None, None, f"Generated file not found: {generated_stl_path}"
-    if not os.path.exists(reference_stl_path): return None, None, None, f"Reference file not found: {reference_stl_path}"
+    if not os.path.exists(generated_stl_path): return None, None, None, None, f"Generated file not found: {generated_stl_path}"
+    if not os.path.exists(reference_stl_path): return None, None, None, None, f"Reference file not found: {reference_stl_path}"
 
     if os.path.samefile(generated_stl_path, reference_stl_path):
         logger.debug("Files are identical (same path), returning zero distance, perfect fitness, identity transform")
         identity_transform = np.identity(4)
-        return 0.0, 1.0, identity_transform, None
+        return 0.0, 1.0, identity_transform, 0.0, None
 
     final_transformation_matrix = None # Initialize the final matrix
     icp_refinement_fitness = None # Fitness score specifically from ICP refinement
+    hausdorff_99p = None # Initialize Hausdorff 99p
 
     try:
         run_id = f"{os.path.basename(generated_stl_path)}_vs_{os.path.basename(reference_stl_path)}".replace('.stl', '')
         logger.debug(f"Loading meshes for similarity check: {generated_stl_path} vs {reference_stl_path}")
         generated_mesh = o3d.io.read_triangle_mesh(generated_stl_path)
         reference_mesh = o3d.io.read_triangle_mesh(reference_stl_path)
-        if not generated_mesh.has_triangles(): return None, None, None, "Generated mesh has no triangles"
-        if not reference_mesh.has_triangles(): return None, None, None, "Reference mesh has no triangles"
+        if not generated_mesh.has_triangles(): return None, None, None, None, "Generated mesh has no triangles"
+        if not reference_mesh.has_triangles(): return None, None, None, None, "Reference mesh has no triangles"
 
         # Ensure normals are computed for sampling/potential later use
         if not generated_mesh.has_vertex_normals(): generated_mesh.compute_vertex_normals()
@@ -258,7 +259,7 @@ def check_similarity(
         N_POINTS_TARGET = 50000 # Target point count for sampling
         logger.debug(f"Targeting {N_POINTS_TARGET} points for uniform sampling.")
         if not generated_mesh.has_triangles() or not reference_mesh.has_triangles():
-            return None, None, None, "Cannot sample points from empty mesh"
+            return None, None, None, None, "Cannot sample points from empty mesh"
 
         logger.debug(f"Sampling up to {N_POINTS_TARGET} points from each mesh...")
         gen_pcd = generated_mesh.sample_points_uniformly(number_of_points=N_POINTS_TARGET)
@@ -273,7 +274,7 @@ def check_similarity(
                            f"Similarity check might be inaccurate.")
             logger.warning(warning_msg)
             if actual_gen_points == 0 or actual_ref_points == 0:
-                 return None, None, None, "Sampling produced zero points."
+                 return None, None, None, None, "Sampling produced zero points."
 
         if SAVE_PCD_FOR_DEBUG:
              o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_ref_sampled.ply"), ref_pcd)
@@ -281,7 +282,7 @@ def check_similarity(
 
         # --- Global Alignment (FPFH + RANSAC) ---
         # NOTE: voxel_size is critical and scale-dependent. Needs tuning. 5.0 is a starting guess.
-        voxel_size = 5.0
+        voxel_size = 1.0 # WP Reduced from 5.0
         logger.debug(f"Starting Global Registration Preprocessing (Voxel Size: {voxel_size})...")
         gen_pcd_down, fpfh_gen = preprocess(gen_pcd, voxel_size, logger)
         ref_pcd_down, fpfh_ref = preprocess(ref_pcd, voxel_size, logger)
@@ -292,9 +293,9 @@ def check_similarity(
             logger.error(error_msg)
             # Cannot proceed with alignment, but maybe can calculate distance on unaligned clouds?
             # For now, return error. Consider fallback later if needed.
-            return None, None, None, error_msg
+            return None, None, None, None, error_msg
 
-        distance_thresh = voxel_size * 1.5 # RANSAC correspondence threshold
+        distance_thresh = voxel_size * 1.5 # RANSAC correspondence threshold (updated based on new voxel_size)
         logger.debug(f"Running RANSAC Global Registration (Distance Threshold: {distance_thresh})...")
         ransac_result = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
             source=gen_pcd_down, target=ref_pcd_down,
@@ -344,34 +345,42 @@ def check_similarity(
         if SAVE_PCD_FOR_DEBUG:
              o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_gen_final_aligned.ply"), gen_pcd_final_aligned)
 
-        # Calculate Chamfer distance using the final aligned point cloud
-        logger.debug("Calculating Chamfer distance on final aligned clouds...")
+        # Calculate distances for Chamfer and Hausdorff
+        logger.debug("Calculating point cloud distances for Chamfer/Hausdorff...")
         dist_gen_to_ref = np.asarray(gen_pcd_final_aligned.compute_point_cloud_distance(ref_pcd))
         dist_ref_to_gen = np.asarray(ref_pcd.compute_point_cloud_distance(gen_pcd_final_aligned))
 
-        # Handle potential empty distance arrays if compute_point_cloud_distance fails
+        # Handle potential empty distance arrays
         if dist_gen_to_ref.size == 0 or dist_ref_to_gen.size == 0:
-             logger.warning("Chamfer distance calculation resulted in empty arrays. Check point clouds.")
-             chamfer_distance = np.inf # Or some other indicator of failure
+             logger.warning("Distance calculation resulted in empty arrays. Cannot compute metrics.")
+             chamfer_distance = np.inf
+             hausdorff_99p = np.inf
         else:
+             # Calculate Chamfer Distance (Average of Means)
              chamfer_distance = (np.mean(dist_gen_to_ref) + np.mean(dist_ref_to_gen)) / 2.0
+             logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f} mm")
 
-        logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f} mm, ICP Refinement Fitness = {icp_refinement_fitness:.6f}")
+             # Calculate 99th Percentile Hausdorff Distance
+             all_distances = np.concatenate((dist_gen_to_ref, dist_ref_to_gen))
+             hausdorff_99p = np.percentile(all_distances, 99)
+             logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: 99th Percentile Hausdorff = {hausdorff_99p:.6f} mm")
+
+        logger.info(f"ICP Refinement Fitness = {icp_refinement_fitness:.6f}") # Log fitness separately
 
         error_msg = None
+        # Note: error_msg currently only relates to Chamfer threshold, not Hausdorff
         if chamfer_distance > threshold:
-             # This is just a note, not necessarily a failure of the check function itself
              error_msg = f"Chamfer distance {chamfer_distance:.4f} mm exceeds threshold {threshold} mm"
              logger.info(f"SimilarityCheck Note: {error_msg}") # Log exceedance as info
 
-        # Return chamfer dist, ICP *refinement* fitness, the *final combined* transform, and potential threshold error msg
-        return chamfer_distance, icp_refinement_fitness, final_transformation_matrix, error_msg
+        # Return chamfer dist, ICP refinement fitness, final transform, hausdorff 99p, and potential threshold error msg
+        return chamfer_distance, icp_refinement_fitness, final_transformation_matrix, hausdorff_99p, error_msg
 
     except Exception as e:
         error_msg = f"Error during similarity check between {generated_stl_path} and {reference_stl_path}: {e}"
         logger.error(error_msg, exc_info=True)
         # Return None for metrics and the error message
-        return None, None, None, error_msg
+        return None, None, None, None, error_msg
 
 def compare_aligned_bounding_boxes(
     generated_stl_path: str,
@@ -379,13 +388,15 @@ def compare_aligned_bounding_boxes(
     final_transform: np.ndarray, # Renamed parameter to reflect it's the final one
     config: Config,
     logger: logging.Logger
-) -> Tuple[Optional[bool], Optional[str]]:
+) -> Tuple[Optional[bool], Optional[List[float]], Optional[List[float]], Optional[str]]:
     """
     Check 4: Compares the bounding box of the fully aligned generated mesh against the reference mesh.
     Uses the final transformation matrix from the similarity check (RANSAC + ICP).
-    Returns (is_accurate, error_message)
+    Returns (is_accurate, ref_dims_sorted, aligned_gen_dims_sorted, error_message)
     """
     error_prefix = "AlignedBBoxCheck:"
+    ref_dims_sorted = None
+    aligned_gen_dims_sorted = None
     try:
         tolerance = config.get_required('geometry_check.bounding_box_tolerance_mm')
         tolerance = float(tolerance)
@@ -418,23 +429,97 @@ def compare_aligned_bounding_boxes(
         logger.debug(f"  Aligned bounding box accuracy result: {is_accurate}")
         if not is_accurate:
             error_msg = f"{error_prefix} Final Aligned vs Ref BBox Dims Diff (Sorted): {[f'{d:.4f}' for d in diffs.tolist()]} exceeds tolerance {tolerance}"
-            return is_accurate, error_msg
+            return is_accurate, ref_dims_sorted, aligned_gen_dims_sorted, error_msg
         else:
-            return is_accurate, None
+            return is_accurate, ref_dims_sorted, aligned_gen_dims_sorted, None
 
     except ConfigError as e:
          # Specific error for missing tolerance config
-         return None, f"{error_prefix} Missing/Invalid 'geometry_check.bounding_box_tolerance_mm' config: {e}"
+         return None, ref_dims_sorted, aligned_gen_dims_sorted, f"{error_prefix} Missing/Invalid 'geometry_check.bounding_box_tolerance_mm' config: {e}"
     except FileNotFoundError as e:
-        return None, f"{error_prefix} Mesh file not found: {e}"
+        return None, ref_dims_sorted, aligned_gen_dims_sorted, f"{error_prefix} Mesh file not found: {e}"
     except ValueError as e: # Catch mesh loading/empty errors
-         return None, f"{error_prefix} Error loading/processing mesh for bbox check: {e}"
+         return None, ref_dims_sorted, aligned_gen_dims_sorted, f"{error_prefix} Error loading/processing mesh for bbox check: {e}"
     except Exception as e:
         logger.error(f"    Unhandled error during aligned bbox comparison: {e}", exc_info=True)
-        return None, f"{error_prefix} Unhandled Exception: {e}"
+        return None, ref_dims_sorted, aligned_gen_dims_sorted, f"{error_prefix} Unhandled Exception: {e}"
 
-# --- Main Orchestration Function ---
+# --- New Volume Check Function --- Start ---
+def check_volume(
+    generated_stl_path: str,
+    reference_stl_path: str,
+    volume_threshold_percent: float = 1.0,
+    logger: logging.Logger = logger # Use module logger by default
+) -> Tuple[Optional[bool], Optional[float], Optional[float], Optional[str]]:
+    """
+    Check 6: Compares the volume of the generated mesh against the reference mesh.
+    Returns (is_within_threshold, reference_volume, generated_volume, error_message)
+    """
+    error_msg = None
+    gen_vol, ref_vol = None, None
+    passed = False # Default to False
 
+    try:
+        gen_mesh = trimesh.load(generated_stl_path, force='mesh')
+        gen_vol = gen_mesh.volume
+    except Exception as e:
+        error_msg = f"Failed to load generated STL for volume check: {e}"
+        logger.error(error_msg)
+        # Return False, None volumes, and the error message
+        return False, None, None, error_msg 
+
+    try:
+        ref_mesh = trimesh.load(reference_stl_path, force='mesh')
+        ref_vol = ref_mesh.volume
+    except Exception as e:
+        error_msg = f"Failed to load reference STL for volume check: {e}"
+        logger.error(error_msg)
+        # Return False, potentially valid gen_vol, None ref_vol, and error
+        return False, None, gen_vol, error_msg 
+
+    # Check for watertightness (required for accurate volume)
+    if not gen_mesh.is_watertight:
+        error_msg = "Generated mesh is not watertight, volume comparison may be inaccurate."
+        logger.warning(error_msg)
+        # Return False as the check cannot be reliably performed
+        return False, ref_vol, gen_vol, error_msg
+
+    if not ref_mesh.is_watertight:
+        error_msg = "Reference mesh is not watertight, volume comparison may be inaccurate."
+        logger.warning(error_msg)
+        # Return False as the check cannot be reliably performed
+        return False, ref_vol, gen_vol, error_msg
+
+    # Check for zero reference volume to avoid division by zero
+    if ref_vol == 0:
+        if gen_vol == 0:
+             passed = True # Both are zero, consider it a pass
+             error_msg = None
+             logger.info("Both reference and generated volumes are zero.")
+        else:
+             passed = False
+             error_msg = "Reference volume is zero, but generated volume is non-zero."
+             logger.warning(error_msg)
+        # Return result for zero ref volume case
+        return passed, ref_vol, gen_vol, error_msg
+
+    # Calculate percentage difference
+    vol_diff = abs(gen_vol - ref_vol)
+    percent_diff = (vol_diff / abs(ref_vol)) * 100 # Use abs(ref_vol) just in case
+
+    passed = percent_diff <= volume_threshold_percent
+    if not passed:
+         logger.info(f"Volume check failed: Diff={percent_diff:.2f}% > Threshold={volume_threshold_percent:.2f}% (Ref: {ref_vol:.2f}, Gen: {gen_vol:.2f})")
+         # Keep error_msg as None, failure is indicated by passed=False
+         error_msg = None 
+    else:
+         logger.info(f"Volume check passed: Diff={percent_diff:.2f}% <= Threshold={volume_threshold_percent:.2f}%")
+         error_msg = None
+
+    # Explicit final return
+    return passed, ref_vol, gen_vol, error_msg
+
+# --- Main Orchestration Function --- Updated ---
 def perform_geometry_checks(
     generated_stl_path: str,
     reference_stl_path: str,
@@ -447,135 +532,201 @@ def perform_geometry_checks(
     """
     logger.info(f"Performing geometry checks for: {os.path.basename(generated_stl_path)}")
 
+    # Initialize results structure with new fields
     check_results = {
         "check_render_successful": None,
         "check_is_watertight": None,
         "check_is_single_component": None,
-        "check_bounding_box_accurate": None, # This will now reflect aligned check
+        "check_bounding_box_accurate": None,
+        "check_volume_passed": None, # New
+        "check_hausdorff_passed": None, # New
         "geometric_similarity_distance": None,
         "icp_fitness_score": None,
-        "check_errors": [] # Store errors encountered during checks
+        "hausdorff_99p_distance": None, # New
+        "reference_volume_mm3": None, # New
+        "generated_volume_mm3": None, # New
+        "reference_bbox_mm": None, # New
+        "generated_bbox_aligned_mm": None, # New
+        "check_errors": []
+    }
+    # Sub-dictionary for boolean checks (consistent with results schema)
+    check_results["checks"] = {
+        "check_render_successful": None,
+        "check_is_watertight": None,
+        "check_is_single_component": None,
+        "check_bounding_box_accurate": None,
+        "check_volume_passed": None,
+        "check_hausdorff_passed": None
     }
 
-    final_transform = None # Variable to store transform from Check 5
+    final_transform = None # Variable to store transform from Similarity Check
 
-    # --- Execute Checks ---
+    # --- Thresholds (Hardcoded for now, consider moving to config) ---
+    hausdorff_threshold = 0.5 # mm
+    volume_threshold_percent = 1.0 # %
+    logger.debug(f"Using thresholds - Hausdorff 99p: {hausdorff_threshold} mm, Volume: {volume_threshold_percent}% diff")
 
-    # Check 1: Render Success
+    # --- Execute Checks --- Step 1: Render Success ---
     render_status = rendering_info.get("status", "Unknown")
     check_results["check_render_successful"] = check_render_success(render_status)
+    check_results["checks"]["check_render_successful"] = check_results["check_render_successful"]
     if not check_results["check_render_successful"]:
         logger.warning("Skipping further geometry checks as rendering was not successful.")
         check_results["check_errors"].append("Rendering failed, subsequent checks skipped.")
-        return check_results
+        return check_results # Early exit
 
-    # Check if generated STL path exists
+    # --- Check if generated STL path exists --- (Essential prerequisite)
     if not generated_stl_path or not os.path.exists(generated_stl_path):
         logger.error(f"Generated STL file not found at {generated_stl_path}, cannot perform geometry checks.")
         check_results["check_errors"].append(f"Generated STL not found ({generated_stl_path}).")
-        # Set subsequent checks to None or indicate failure due to missing input
-        check_results["check_is_watertight"] = None
-        check_results["check_is_single_component"] = None
-        check_results["check_bounding_box_accurate"] = None
+        # Set all subsequent checks to indicate failure/skipped
+        for key in check_results["checks"]:
+            if check_results["checks"][key] is None: check_results["checks"][key] = False # Or None?
         return check_results
 
+    # --- Prerequisite Checks (Watertight, Single Component) ---
     # Check 2: Watertight
-    is_watertight = None # Initialize for Check 5 prerequisite check
+    is_watertight = None
     try:
         is_watertight, watertight_error = check_watertight(generated_stl_path, logger)
         check_results["check_is_watertight"] = is_watertight
+        check_results["checks"]["check_is_watertight"] = is_watertight
         if watertight_error:
             check_results["check_errors"].append(f"WatertightCheck: {watertight_error}")
     except Exception as e:
         logger.error(f"Unhandled error calling check_watertight: {e}", exc_info=True)
         check_results["check_is_watertight"] = False
+        check_results["checks"]["check_is_watertight"] = False
         check_results["check_errors"].append(f"WatertightCheck: Unhandled Exception - {e}")
 
     # Check 3: Single Component
     try:
-        is_single, single_error = check_single_component(
-            generated_stl_path,
-            task_requirements, # Pass requirements here
-            logger
-        )
+        is_single, single_error = check_single_component(generated_stl_path, task_requirements, logger)
         check_results["check_is_single_component"] = is_single
+        check_results["checks"]["check_is_single_component"] = is_single
         if single_error:
             check_results["check_errors"].append(f"SingleComponentCheck: {single_error}")
     except Exception as e:
         logger.error(f"Unhandled error calling check_single_component: {e}", exc_info=True)
         check_results["check_is_single_component"] = False
+        check_results["checks"]["check_is_single_component"] = False
         check_results["check_errors"].append(f"SingleComponentCheck: Unhandled Exception - {e}")
 
-    # Check 5: Geometric Similarity (Runs before Check 4)
+    # --- Check 5: Geometric Similarity (Includes Hausdorff) ---
+    # Depends on reference file existing
     if not reference_stl_path or not os.path.exists(reference_stl_path):
-        check_results["check_errors"].append(f"SimilarityCheck: Reference STL not found ({reference_stl_path}), skipping Similarity and Aligned BBox checks.")
-        check_results["check_bounding_box_accurate"] = None # Cannot perform aligned bbox check without reference
-    elif is_watertight is not False: # Run if watertight check didn't explicitly fail
+        check_results["check_errors"].append(f"SimilarityCheck: Reference STL not found ({reference_stl_path}), skipping Similarity, Hausdorff, Aligned BBox, and Volume checks.")
+        # Set dependent checks to None/False
+        check_results["check_bounding_box_accurate"] = None
+        check_results["checks"]["check_bounding_box_accurate"] = None
+        check_results["check_hausdorff_passed"] = None
+        check_results["checks"]["check_hausdorff_passed"] = None
+        check_results["check_volume_passed"] = None
+        check_results["checks"]["check_volume_passed"] = None
+    # Consider skipping if watertight check failed? Current logic proceeds.
+    else:
         try:
-            # Standardize config access for similarity threshold
             similarity_key = 'geometry_check.similarity_threshold_mm'
             default_sim_thresh = DEFAULT_CONFIG.get('geometry_check', {}).get('similarity_threshold_mm', 1.0)
-            similarity_threshold_value = config.get(similarity_key, default_sim_thresh)
-            similarity_threshold_value = float(similarity_threshold_value)
+            chamfer_threshold_value = float(config.get(similarity_key, default_sim_thresh))
 
-            chamfer_dist, icp_fitness, final_transform, sim_error = check_similarity(
+            chamfer_dist, icp_fitness, final_transform, hausdorff_99p, sim_error = check_similarity(
                  generated_stl_path,
                  reference_stl_path,
-                 similarity_threshold_value, # Pass the float threshold
+                 chamfer_threshold_value,
                  logger
             )
+            # Store raw values
             check_results["geometric_similarity_distance"] = chamfer_dist
-            check_results["icp_fitness_score"] = icp_fitness # This is now ICP refinement fitness
+            check_results["icp_fitness_score"] = icp_fitness
+            check_results["hausdorff_99p_distance"] = hausdorff_99p
 
-            if sim_error:
-                # Only record as error if it's not just exceeding threshold
-                if "exceeds threshold" not in sim_error:
-                     check_results["check_errors"].append(f"SimilarityCheck Error: {sim_error}")
-                     final_transform = None # Don't trust transform if similarity calc failed
-                # else: Threshold exceedance is logged within check_similarity now
+            # Perform Hausdorff check
+            if hausdorff_99p is not None and not np.isinf(hausdorff_99p):
+                is_hausdorff_passed = hausdorff_99p <= hausdorff_threshold
+                check_results["check_hausdorff_passed"] = is_hausdorff_passed
+                check_results["checks"]["check_hausdorff_passed"] = is_hausdorff_passed
+                if not is_hausdorff_passed:
+                    check_results["check_errors"].append(f"HausdorffCheck: 99p distance {hausdorff_99p:.4f} mm exceeds threshold {hausdorff_threshold} mm")
+            else:
+                check_results["check_hausdorff_passed"] = False # Treat None/inf as failure
+                check_results["checks"]["check_hausdorff_passed"] = False
+                check_results["check_errors"].append(f"HausdorffCheck: Calculation failed or resulted in infinity.")
+
+            # Handle similarity check errors (e.g., alignment failure)
+            if sim_error and "exceeds threshold" not in sim_error:
+                 check_results["check_errors"].append(f"SimilarityCheck Error: {sim_error}")
+                 final_transform = None # Don't trust transform if similarity calc failed
+            # Chamfer threshold exceedance is noted internally by check_similarity
 
         except (ConfigError, ValueError, TypeError) as e:
              logger.error(f"Invalid configuration for key '{similarity_key}': {e}", exc_info=True)
              check_results["check_errors"].append(f"SimilarityCheck: Invalid threshold config - {e}")
-             final_transform = None # Cannot proceed
+             final_transform = None
+             check_results["check_hausdorff_passed"] = False
+             check_results["checks"]["check_hausdorff_passed"] = False
         except Exception as e:
             logger.error(f"Unhandled error calling check_similarity: {e}", exc_info=True)
             check_results["check_errors"].append(f"SimilarityCheck: Unhandled Exception - {e}")
             check_results["geometric_similarity_distance"] = None
             check_results["icp_fitness_score"] = None
-            final_transform = None # Ensure transform is None on error
+            check_results["hausdorff_99p_distance"] = None
+            check_results["check_hausdorff_passed"] = False
+            check_results["checks"]["check_hausdorff_passed"] = False
+            final_transform = None
 
-    else: # Watertight check failed explicitly
-        logger.warning("Skipping similarity check and aligned bbox check due to prior watertight/load failure.")
-        check_results["check_errors"].append("SimilarityCheck/AlignedBBoxCheck: Skipped due to prior watertight/load failure.")
-        check_results["check_bounding_box_accurate"] = None
+        # --- Check 4: Bounding Box (Aligned vs Reference) ---
+        # Runs only if alignment transform was obtained
+        if final_transform is not None:
+             try:
+                 is_bbox_accurate, ref_dims, aligned_dims, bbox_error = compare_aligned_bounding_boxes(
+                     generated_stl_path,
+                     reference_stl_path,
+                     final_transform,
+                     config,
+                     logger
+                 )
+                 check_results["check_bounding_box_accurate"] = is_bbox_accurate
+                 check_results["checks"]["check_bounding_box_accurate"] = is_bbox_accurate
+                 check_results["reference_bbox_mm"] = ref_dims
+                 check_results["generated_bbox_aligned_mm"] = aligned_dims
+                 if bbox_error:
+                     check_results["check_errors"].append(bbox_error)
 
-    # Check 4: Bounding Box (Aligned vs Reference)
-    # Runs only if final_transform was successfully obtained in Check 5
-    if final_transform is not None: # Check the renamed variable
-         try:
-             is_bbox_accurate, bbox_error = compare_aligned_bounding_boxes(
+             except Exception as e:
+                logger.error(f"Unhandled error during aligned bounding box check: {e}", exc_info=True)
+                check_results["check_bounding_box_accurate"] = False
+                check_results["checks"]["check_bounding_box_accurate"] = False
+                check_results["check_errors"].append(f"AlignedBBoxCheck: Unhandled Exception - {e}")
+        else:
+             logger.warning("Skipping aligned bounding box check as alignment failed or was skipped.")
+             check_results["check_bounding_box_accurate"] = None # Explicitly None if skipped
+             check_results["checks"]["check_bounding_box_accurate"] = None
+
+        # --- Check 6: Volume Check ---
+        try:
+            is_volume_passed, ref_vol, gen_vol, volume_error = check_volume(
                  generated_stl_path,
                  reference_stl_path,
-                 final_transform, # Pass the final transform
-                 config,
-                 logger
-             )
-             check_results["check_bounding_box_accurate"] = is_bbox_accurate
-             # Add error message only if the check explicitly failed (result False)
-             if is_bbox_accurate is False and bbox_error:
-                 check_results["check_errors"].append(bbox_error)
-             elif bbox_error: # Log other errors (e.g., config/file not found)
-                 check_results["check_errors"].append(bbox_error)
+                 volume_threshold_percent=volume_threshold_percent,
+                 logger=logger
+            )
+            check_results["check_volume_passed"] = is_volume_passed
+            check_results["checks"]["check_volume_passed"] = is_volume_passed
+            check_results["reference_volume_mm3"] = ref_vol
+            check_results["generated_volume_mm3"] = gen_vol
+            if volume_error:
+                check_results["check_errors"].append(volume_error)
 
-         except Exception as e: # Catch potential unhandled errors from the helper
-            logger.error(f"Unhandled error during aligned bounding box check: {e}", exc_info=True)
-            check_results["check_bounding_box_accurate"] = None # Indicate failure/error
-            check_results["check_errors"].append(f"AlignedBBoxCheck: Unhandled Exception - {e}")
-    # Else: check_results["check_bounding_box_accurate"] remains None because final_transform was None
+        except Exception as e:
+            logger.error(f"Unhandled error during volume check: {e}", exc_info=True)
+            check_results["check_volume_passed"] = False
+            check_results["checks"]["check_volume_passed"] = False
+            check_results["check_errors"].append(f"VolumeCheck: Unhandled Exception - {e}")
+
+    # End of block checking things requiring reference STL
 
     logger.info(f"Geometry checks completed for: {os.path.basename(generated_stl_path)}")
-    # Add check_results_valid flag? Or rely on None values? Let's rely on None for now.
     return check_results
 
 if __name__ == "__main__":

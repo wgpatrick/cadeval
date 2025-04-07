@@ -1,7 +1,11 @@
 let charts = {
     successRate: null,
     checksPassed: null,
-    similarity: null
+    similarity: null,
+    avgHausdorff: null,
+    avgVolumeDiff: null,
+    volumePassRate: null,
+    hausdorffPassRate: null
 };
 
 // --- Helper Functions ---
@@ -11,6 +15,17 @@ function formatBooleanText(value) {
         return 'Yes';
     } else if (value === false) {
         return 'No';
+    } else {
+        return 'N/A';
+    }
+}
+
+// New formatter for Pass/Fail text
+function formatPassFailText(value) {
+    if (value === true) {
+        return 'Pass';
+    } else if (value === false) {
+        return 'Fail';
     } else {
         return 'N/A';
     }
@@ -26,6 +41,11 @@ function formatSimilarityText(value) {
         return 'Invalid';
     }
     return numValue.toFixed(2) + ' mm';
+}
+
+// New formatter for volume/bbox details
+function formatDetailText(value) {
+    return (value !== null && typeof value !== 'undefined') ? value : 'N/A';
 }
 
 // --- Cell Renderers for AG-Grid ---
@@ -52,10 +72,14 @@ function renderSummaryCharts(metaStatistics) {
     // Destroy existing charts if they exist
     Object.values(charts).forEach(chart => chart?.destroy());
 
-    // Extract data for charts
-    const successRates = modelNames.map(m => metaStatistics[m].overall_pipeline_success_rate); // Use the correct key
-    const checksPassedRates = modelNames.map(m => metaStatistics[m].all_geo_checks_passed_rate_rel); // Use the correct key
-    const avgSimilarity = modelNames.map(m => metaStatistics[m].average_similarity_distance); // Use the correct key
+    // Extract data for charts (including new ones)
+    const successRates = modelNames.map(m => metaStatistics[m].overall_pipeline_success_rate);
+    const checksPassedRates = modelNames.map(m => metaStatistics[m].all_geo_checks_passed_rate_rel);
+    const avgChamfer = modelNames.map(m => metaStatistics[m].average_chamfer_distance); // Renamed field
+    const avgHausdorff = modelNames.map(m => metaStatistics[m].average_hausdorff_99p_distance); // New
+    const avgVolumeDiff = modelNames.map(m => metaStatistics[m].average_volume_diff_percent); // New
+    const volumePassRates = modelNames.map(m => metaStatistics[m].volume_check_pass_rate_rel); // New
+    const hausdorffPassRates = modelNames.map(m => metaStatistics[m].hausdorff_check_pass_rate_rel); // New
 
     const commonChartOptions = {
         scales: {
@@ -88,10 +112,15 @@ function renderSummaryCharts(metaStatistics) {
         scales: { y: { beginAtZero: true, max: 100, ticks: { callback: value => value + '%' } } } // Y-axis as percentage
     };
 
-     const similarityChartOptions = {
+     const distanceChartOptions = { // Use specific name for distance
          ...commonChartOptions,
         scales: { y: { beginAtZero: true } }
      };
+
+     const percentDiffChartOptions = { // Use specific name for % diff
+          ...commonChartOptions,
+         scales: { y: { beginAtZero: true, ticks: { callback: value => value + '%' } } } // Y-axis as percentage diff
+      };
 
 
     // 1. Overall Success Rate Chart
@@ -118,7 +147,7 @@ function renderSummaryCharts(metaStatistics) {
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Checks Passed Rate (Rel. to Checks Run)', // Updated label
+                label: 'Metric Checks Passed Rate (Rel. to Checks Run)', // Updated label
                 // Replace nulls with NaN for Chart.js to skip them gracefully
                  data: checksPassedRates.map(d => d === null ? NaN : d),
                 backgroundColor: 'rgba(255, 193, 7, 0.6)', // Warning yellow
@@ -126,25 +155,97 @@ function renderSummaryCharts(metaStatistics) {
                 borderWidth: 1
             }]
         },
-        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Checks Passed Rate (% Rel. to Checks Run)' }}} // Updated title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Metric Checks Passed Rate (% Rel. to Checks Run)' }}} // Updated title
     });
 
-    // 3. Average Similarity Chart
-    const similarityCtx = document.getElementById('avgSimilarityChart').getContext('2d');
-     charts.similarity = new Chart(similarityCtx, {
+    // 3. Average Chamfer Distance Chart
+    const chamferCtx = document.getElementById('avgSimilarityChart').getContext('2d');
+     charts.similarity = new Chart(chamferCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Avg Similarity Distance (mm)',
+                label: 'Avg Chamfer Distance (mm)',
                 // Replace nulls with NaN for Chart.js to skip them gracefully
-                data: avgSimilarity.map(d => d === null ? NaN : d),
+                data: avgChamfer.map(d => d === null ? NaN : d),
                  backgroundColor: 'rgba(153, 102, 255, 0.6)',
                 borderColor: 'rgba(153, 102, 255, 1)',
                 borderWidth: 1
             }]
         },
-         options: { ...similarityChartOptions, plugins: { ...similarityChartOptions.plugins, title: { display: true, text: 'Avg Similarity Distance (Lower is Better)' }}} // Add title
+         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Chamfer Distance (Lower is Better)' }}} // Add title
+    });
+
+    // 4. Average Hausdorff Distance Chart
+    const hausdorffCtx = document.getElementById('avgHausdorffChart').getContext('2d');
+    charts.avgHausdorff = new Chart(hausdorffCtx, {
+        type: 'bar',
+        data: {
+            labels: modelNames,
+            datasets: [{
+                label: 'Avg Hausdorff 99p Distance (mm)',
+                // Replace nulls with NaN for Chart.js to skip them gracefully
+                data: avgHausdorff.map(d => d === null ? NaN : d),
+                 backgroundColor: 'rgba(23, 162, 184, 0.6)',
+                borderColor: 'rgba(23, 162, 184, 1)',
+                borderWidth: 1
+            }]
+        },
+         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Hausdorff 99p Distance (Lower is Better)' }}} // Add title
+    });
+
+    // 5. Average Volume Difference Chart
+    const volumeDiffCtx = document.getElementById('avgVolumeDiffChart').getContext('2d');
+    charts.avgVolumeDiff = new Chart(volumeDiffCtx, {
+        type: 'bar',
+        data: {
+            labels: modelNames,
+            datasets: [{
+                label: 'Avg Volume Difference (%)',
+                // Replace nulls with NaN for Chart.js to skip them gracefully
+                data: avgVolumeDiff.map(d => d === null ? NaN : d),
+                 backgroundColor: 'rgba(253, 126, 20, 0.6)',
+                borderColor: 'rgba(253, 126, 20, 1)',
+                borderWidth: 1
+            }]
+        },
+         options: { ...percentDiffChartOptions, plugins: { ...percentDiffChartOptions.plugins, title: { display: true, text: 'Avg Volume Difference (% vs Reference)' }}} // Add title
+    });
+
+    // 6. Volume Check Pass Rate Chart
+    const volumePassCtx = document.getElementById('volumePassRateChart').getContext('2d');
+    charts.volumePassRate = new Chart(volumePassCtx, {
+        type: 'bar',
+        data: {
+            labels: modelNames,
+            datasets: [{
+                label: 'Volume Check Pass Rate (%)',
+                // Replace nulls with NaN for Chart.js to skip them gracefully
+                data: volumePassRates.map(d => d === null ? NaN : d),
+                 backgroundColor: 'rgba(111, 66, 193, 0.6)',
+                borderColor: 'rgba(111, 66, 193, 1)',
+                borderWidth: 1
+            }]
+        },
+         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Volume Check Pass Rate (% Rel. to Checks Run)' }}} // Add title
+    });
+
+    // 7. Hausdorff Check Pass Rate Chart
+    const hausdorffPassCtx = document.getElementById('hausdorffPassRateChart').getContext('2d');
+    charts.hausdorffPassRate = new Chart(hausdorffPassCtx, {
+        type: 'bar',
+        data: {
+            labels: modelNames,
+            datasets: [{
+                label: 'Hausdorff Check Pass Rate (%)',
+                // Replace nulls with NaN for Chart.js to skip them gracefully
+                data: hausdorffPassRates.map(d => d === null ? NaN : d),
+                 backgroundColor: 'rgba(214, 51, 132, 0.6)',
+                borderColor: 'rgba(214, 51, 132, 1)',
+                borderWidth: 1
+            }]
+        },
+         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Hausdorff Check Pass Rate (% Rel. to Checks Run)' }}} // Add title
     });
 
     const chartsContainer = document.getElementById('charts-container');
@@ -157,7 +258,10 @@ function renderSummaryCharts(metaStatistics) {
 
 
 // --- HTML Table Creation ---
-const SIMILARITY_THRESHOLD_MM = 1.0; // Define pass/fail threshold for similarity
+const SIMILARITY_THRESHOLD_MM = 1.0; // Chamfer threshold (matches default in geometry_check)
+const BOUNDING_BOX_TOLERANCE_MM = 0.5; // BBox threshold (matches value in user's config.yaml)
+const HAUSDORFF_THRESHOLD_MM = 0.5; // Hausdorff threshold (matches geometry_check.py)
+const VOLUME_THRESHOLD_PERCENT = 1.0; // Volume threshold (matches geometry_check.py)
 
 function createModelHtmlTable(modelName, modelResults, container) {
     const modelHeader = document.createElement('h2');
@@ -173,21 +277,56 @@ function createModelHtmlTable(modelName, modelResults, container) {
     const columns = [
         { key: 'task_id', header: 'Task ID' },
         { key: 'scad_generation_success', header: 'SCAD Gen', format: formatBooleanText, isBoolean: true },
-        { key: 'render_success', header: 'Render', format: formatBooleanText, isBoolean: true },
-        // { key: 'render_status_detail', header: 'Render Status' }, // Example: Can be added back if needed
-        { key: 'geometry_check_orchestration_success', header: 'Checks Run', format: formatBooleanText, isBoolean: true },
-        { key: 'individual_geometry_checks_passed', header: 'Checks Passed', format: formatBooleanText, isBoolean: true },
+        { key: 'render_success', header: 'Render OK', format: formatBooleanText, isBoolean: true }, // Use 'check_render_successful'
+        // { key: 'render_status_detail', header: 'Render Status' }, // Can be added back if needed
+        { key: 'geometry_check_run_success', header: 'Checks Run', format: formatBooleanText, isBoolean: true },
+        //{ key: 'individual_geometry_checks_passed', header: 'Metric Checks Passed', format: formatBooleanText, isBoolean: true }, // Maybe redundant with individual cols?
+
         // Add individual check columns dynamically if they exist
         ...(modelResults[0]?.individual_check_statuses ?
-            Object.keys(modelResults[0].individual_check_statuses).map(checkKey => ({
+            Object.keys(modelResults[0].individual_check_statuses)
+              // Filter to only include the core checks we want to display individually
+              .filter(key => [
+                  'check_render_successful', // Already covered by 'Render OK'?
+                  'check_is_watertight',
+                  'check_is_single_component',
+                  'check_bounding_box_accurate',
+                  'check_volume_passed', // New
+                  'check_hausdorff_passed' // New
+                ].includes(key))
+              .map(checkKey => ({
                 key: `individual_check_statuses.${checkKey}`,
-                header: checkKey.replace('check_', '').replace(/_/g, ' ').replace('accurate', 'Acc.').replace('successful', 'OK').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '), // Nicer Header
-                format: formatBooleanText, // Use boolean formatter for display
-                isBoolean: true // Mark as boolean for styling
+                // Nicer Header logic
+                header: checkKey === 'check_is_single_component' ? 'Component Count' :
+                        checkKey === 'check_bounding_box_accurate' ? `BBox Acc. (< ${BOUNDING_BOX_TOLERANCE_MM.toFixed(1)}mm)` :
+                        checkKey === 'check_volume_passed' ? `Volume Passed (< ${VOLUME_THRESHOLD_PERCENT.toFixed(1)}% Diff)` :
+                        checkKey === 'check_hausdorff_passed' ? `Hausdorff Passed (< ${HAUSDORFF_THRESHOLD_MM.toFixed(1)} mm)` :
+                        checkKey.replace('check_', '')
+                                .replace(/_/g, ' ')
+                                .replace('is ', '')
+                                .replace('accurate', 'Acc.')
+                                .replace('successful', 'OK')
+                                .split(' ')
+                                .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+                                .join(' '),
+                format: formatPassFailText, // Use the Pass/Fail formatter for display text
+                isBoolean: true // Mark as boolean for styling/logic
             })) : []),
-        { key: 'geometric_similarity_distance', header: 'Similarity (mm)', format: formatSimilarityText, isSimilarity: true }, // Mark for special styling
-        // { key: 'geometry_check_error_detail', header: 'Check Error' }, // Example: Can be added back if needed
-        // { key: 'generation_error', header: 'Generation Error' } // Example: Can be added back if needed
+        // Added Chamfer Passed column
+        { key: 'chamfer_check_passed', header: `Chamfer Passed (< ${SIMILARITY_THRESHOLD_MM.toFixed(1)}mm)`, format: formatPassFailText, isBoolean: true },
+        // Removed isSimilarity: true from Chamfer distance
+        { key: 'geometric_similarity_distance', header: 'Chamfer (mm)', format: formatSimilarityText, threshold: SIMILARITY_THRESHOLD_MM }, 
+        { key: 'hausdorff_99p_distance_detail', header: 'Hausdorff (mm)', format: formatDetailText, isMetric: true }, // Display detail string
+        { key: 'volume_reference_detail', header: 'Vol Ref (mm³)', format: formatDetailText, isMetric: true }, // Display detail string
+        { key: 'volume_generated_detail', header: 'Vol Gen (mm³)', format: formatDetailText, isMetric: true }, // Display detail string
+        { key: 'bbox_reference_detail', header: 'BBox Ref (mm)', format: formatDetailText, isMetric: true }, // Display detail string
+        { key: 'bbox_generated_aligned_detail', header: 'BBox Gen Aligned (mm)', format: formatDetailText, isMetric: true }, // Display detail string
+
+        // New column for visualization command
+        { key: 'visualize_cmd', header: 'Visualize Cmd' },
+
+        // { key: 'geometry_check_error_detail', header: 'Check Error' }, // Can be added back if needed
+        // { key: 'generation_error', header: 'Generation Error' } // Can be added back if needed
     ];
 
     // Create header row
@@ -195,6 +334,7 @@ function createModelHtmlTable(modelName, modelResults, container) {
     columns.forEach(col => {
         const th = document.createElement('th');
         th.textContent = col.header;
+
         headerRow.appendChild(th);
     });
 
@@ -211,42 +351,78 @@ function createModelHtmlTable(modelName, modelResults, container) {
             let displayValue;
             let cellStatusClass = ''; // e.g., 'status-yes', 'status-no', 'status-na'
 
-            // Format for display
-            if (col.format) {
-                displayValue = col.format(rawValue);
+            // --- Handle specific columns ---
+            if (col.key === 'visualize_cmd') {
+                const refPath = result.reference_stl_path;
+                const genPath = result.output_stl_path;
+                // Only create command if both paths exist
+                if (refPath && genPath) {
+                    const task = result.task_id || 'task';
+                    const model = result.model_name || 'model';
+                    const title = `Viz: ${task}-${model} (Ref=Green, Gen=Red)`;
+                    // Construct command - assuming paths are relative to project root
+                    displayValue = `python scripts/visualize_comparison.py --ref "${refPath}" --gen "${genPath}" --title "${title}"`;
+                    cell.textContent = displayValue;
+                } else {
+                    displayValue = 'N/A'; // Cannot visualize if paths missing
+                    cell.textContent = displayValue;
+                    cellStatusClass = 'status-na';
+                }
             } else {
-                displayValue = rawValue !== null && typeof rawValue !== 'undefined' ? rawValue : 'N/A';
+                 // Handle nested keys like 'individual_check_statuses.check_manifold'
+                 let rawValue = col.key.split('.').reduce((obj, key) => obj?.[key], result);
+    
+                // Handle formatting for other columns
+                 if (col.format) { 
+                     displayValue = col.format(rawValue);
+                     cell.textContent = displayValue;
+                 } else {
+                     displayValue = rawValue !== null && typeof rawValue !== 'undefined' ? rawValue : 'N/A';
+                     cell.textContent = displayValue;
+                 }
             }
-            cell.textContent = displayValue;
 
             // Determine cell status class for styling
-            if (displayValue === 'N/A') {
+            if (displayValue === 'N/A' || rawValue === null || typeof rawValue === 'undefined') {
                 cellStatusClass = 'status-na';
-                isRowFullySuccessful = false; // N/A counts as overall failure for the row
-            } else if (col.isBoolean) {
-                if (rawValue === true) {
-                     cellStatusClass = 'status-yes';
-                 } else {
-                     cellStatusClass = 'status-no';
-                     isRowFullySuccessful = false; // Any 'No' makes the row fail
-                 }
-            } else if (col.isSimilarity) {
-                const numericValue = Number(rawValue);
-                if (!isNaN(numericValue)) {
-                    if (numericValue <= SIMILARITY_THRESHOLD_MM) {
-                         cellStatusClass = 'status-yes';
-                     } else {
-                         cellStatusClass = 'status-no';
-                         isRowFullySuccessful = false; // High similarity makes the row fail
-                     }
-                } else {
-                    cellStatusClass = 'status-na'; // Treat non-numeric similarity as N/A
-                    isRowFullySuccessful = false;
+                // N/A in certain critical columns means overall failure
+                if ([ 'scad_generation_success',
+                     'render_success',
+                     'geometry_check_run_success',
+                     `individual_check_statuses.check_is_watertight`,
+                     `individual_check_statuses.check_is_single_component`,
+                     `individual_check_statuses.check_bounding_box_accurate`,
+                     `individual_check_statuses.check_volume_passed`, // New
+                     `individual_check_statuses.check_hausdorff_passed` // New
+                    ].includes(col.key))
+                {
+                     isRowFullySuccessful = false;
                 }
-            }
+            } else if (col.isBoolean) {
+                 if (rawValue === true) {
+                      cellStatusClass = 'status-yes';
+                  } else {
+                      cellStatusClass = 'status-no';
+                      // If this boolean check is required for success, mark row as failed
+                      if ([ 'scad_generation_success',
+                           'render_success',
+                           `individual_check_statuses.check_is_watertight`,
+                           `individual_check_statuses.check_is_single_component`,
+                           `individual_check_statuses.check_bounding_box_accurate`,
+                           `individual_check_statuses.check_volume_passed`, // New
+                           `individual_check_statuses.check_hausdorff_passed` // New
+                         ].includes(col.key)) {
+                           isRowFullySuccessful = false;
+                      }
+                  }
+             } else if (col.isMetric) {
+                 // Apply general styling but don't affect row success based on metric value itself
+                 // (Success determined by the boolean check columns)
+                 cellStatusClass = 'status-metric'; // Class for styling metric values if needed
+             }
 
             // Apply the status class to the current cell
-            if (cellStatusClass) {
+            if (cellStatusClass) { 
                 cell.classList.add(cellStatusClass);
             }
 

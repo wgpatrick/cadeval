@@ -4,4 +4,4 @@ reference_stl: "./reference/task7.stl" # Path relative to project root, ensure t
 requirements:
   bounding_box: [60,60,10] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
   topology_requirements: # Optional section
-    expected_component_count: 2 # Corrected: Torus has 2 components topologically.
+    expected_component_count: 2 # Usually 1 for single parts. Remove if not needed.

@@ -22,34 +22,31 @@
 
 </head>
 <body>
-    <h1 id="run-id">CadEval Dashboard - Loading...</h1>
+    <header>
+        <h1 id="run-id">CadEval Dashboard</h1>
+    </header>
 
-    <!-- File Input Removed -->
+    <div id="loading-indicator">Loading data...</div>
+    <div id="error-indicator" style="display: none; color: red;"></div>
 
-    <!-- Loading and Error Indicators -->
-    <div id="loading-indicator">Loading dashboard data...</div>
-    <div id="error-indicator"></div>
-
-    <!-- Summary Charts -->
-    <div id="charts-container">
-        <div class="chart-wrapper">
-            <canvas id="successRateChart"></canvas>
-        </div>
-        <div class="chart-wrapper">
-            <canvas id="checksPassedChart"></canvas>
-        </div>
-        <div class="chart-wrapper">
-            <canvas id="avgSimilarityChart"></canvas>
-        </div>
+    <div id="charts-container" class="charts-grid" style="display: none;">
+        <div class="chart-wrapper"><canvas id="successRateChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="checksPassedChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="avgSimilarityChart"></canvas></div>
+        <!-- Add placeholders for new charts -->
+        <div class="chart-wrapper"><canvas id="avgHausdorffChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="avgVolumeDiffChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="volumePassRateChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="hausdorffPassRateChart"></canvas></div>
     </div>
 
-    <!-- Detailed Results Grids -->
     <div id="grids-container">
-        <!-- Grids will be populated here by JavaScript -->
+        <!-- Tables will be generated here by JavaScript -->
     </div>
 
-    <!-- Link to external JavaScript -->
+    <!-- Load Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Load Dashboard Logic -->
     <script src="dashboard.js"></script>
-
 </body>
 </html>

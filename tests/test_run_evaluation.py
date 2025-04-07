@@ -71,12 +71,18 @@ SAMPLE_MODELS_CONFIG = [
 class TestRunEvaluationFiltering:
     @staticmethod
     def run_main_with_mocked_args(mock_args, mocks):
-        """Helper function to set up mocks and run main()."""
+        """Helper function to set up mocks and run main(). Returns the mock logger."""
         (mock_parse_args, mock_get_config, mock_load_tasks,
          mock_assemble_final_results, mock_perform_geometry_checks, mock_render_scad_file,
-         mock_generate_scad_for_task, mock_validate_openscad_config) = mocks
+         mock_generate_scad_for_task, mock_validate_openscad_config,
+         mock_get_logger) = mocks
 
         mock_parse_args.return_value = mock_args
+        
+        # Create and set up the mock logger BEFORE config is loaded/main is run
+        mock_logger = MagicMock(spec=logging.Logger)
+        mock_get_logger.return_value = mock_logger
+
         mock_config = create_mock_config({
             # Provide a list of dictionaries for models
             'llm.models': [
@@ -99,9 +105,38 @@ class TestRunEvaluationFiltering:
         ]
 
         mock_validate_openscad_config.return_value = True
-        mock_generate_scad_for_task.return_value = "mock_generated.scad"
-        mock_render_scad_file.return_value = ("mock_rendered.stl", "", 0)
-        mock_perform_geometry_checks.return_value = {"check_passed": True}
+        mock_generate_scad_for_task.return_value = {
+            "output_path": "mock_generated.scad",
+            "output_scad_path": "mock_generated.scad",
+            "success": True,
+            "error": None,
+            "generation_time": 5.0
+        }
+        mock_render_scad_file.return_value = {
+            "scad_path": "mock_generated.scad",
+            "stl_path": "mock_rendered.stl",
+            "render_error": None,
+            "render_time": 2.5,
+            "status": "Success"
+        }
+        mock_perform_geometry_checks.return_value = {
+            "checks": {
+                "check_render_successful": True,
+                "check_is_watertight": True,
+                "check_is_single_component": True,
+                "check_bounding_box_accurate": True,
+                "check_volume_passed": True,
+                "check_hausdorff_passed": True
+            },
+            "geometric_similarity_distance": 0.1,
+            "icp_fitness_score": 0.99,
+            "hausdorff_99p_distance": 0.2,
+            "reference_volume_mm3": 1000.0,
+            "generated_volume_mm3": 1005.0,
+            "reference_bbox_mm": [10.0, 10.0, 10.0],
+            "generated_bbox_aligned_mm": [10.1, 10.0, 9.9],
+            "check_error": None
+        }
         mock_assemble_final_results.return_value = {"final": "results"}
 
         try:
@@ -111,6 +146,8 @@ class TestRunEvaluationFiltering:
                 raise AssertionError(f"main() exited unexpectedly with code {e.code}") from e
         except Exception as e:
             raise AssertionError(f"main() raised an unexpected exception: {e}") from e
+            
+        return mock_logger
 
 # **** Test functions moved to module level ****
 def test_filtering_no_filters(caplog):
@@ -127,13 +164,17 @@ def test_filtering_no_filters(caplog):
          patch('scripts.run_evaluation.perform_geometry_checks') as mock_perform_geometry_checks, \
          patch('scripts.run_evaluation.render_scad_file') as mock_render_scad_file, \
          patch('scripts.run_evaluation.generate_scad_for_task') as mock_generate_scad_for_task, \
-         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config:
+         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config, \
+         patch('scripts.run_evaluation.os.path.exists') as mock_path_exists, \
+         patch('scripts.run_evaluation.get_logger') as mock_get_logger:
 
         all_mocks = (mock_parse_args, mock_get_config, mock_load_tasks,
                      mock_assemble_final_results, mock_perform_geometry_checks, mock_render_scad_file,
-                     mock_generate_scad_for_task, mock_validate_openscad_config)
+                     mock_generate_scad_for_task, mock_validate_openscad_config, mock_get_logger)
 
-        TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
+        mock_path_exists.return_value = True
+
+        mock_logger = TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
 
         assert mock_generate_scad_for_task.call_count == 9
         assert mock_render_scad_file.call_count == 9
@@ -141,6 +182,9 @@ def test_filtering_no_filters(caplog):
         assert mock_assemble_final_results.call_count == 1
         assert "Filtering tasks" not in caplog.text
         assert "Filtering models" not in caplog.text
+
+        mock_logger.info.assert_called()
+        mock_logger.warning.assert_not_called()
 
 def test_filtering_with_task_filter(caplog):
     """Test main() logic with --tasks filter."""
@@ -156,21 +200,31 @@ def test_filtering_with_task_filter(caplog):
          patch('scripts.run_evaluation.perform_geometry_checks') as mock_perform_geometry_checks, \
          patch('scripts.run_evaluation.render_scad_file') as mock_render_scad_file, \
          patch('scripts.run_evaluation.generate_scad_for_task') as mock_generate_scad_for_task, \
-         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config:
+         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config, \
+         patch('scripts.run_evaluation.os.path.exists') as mock_path_exists, \
+         patch('scripts.run_evaluation.get_logger') as mock_get_logger:
 
         all_mocks = (mock_parse_args, mock_get_config, mock_load_tasks,
                      mock_assemble_final_results, mock_perform_geometry_checks, mock_render_scad_file,
-                     mock_generate_scad_for_task, mock_validate_openscad_config)
-        TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
+                     mock_generate_scad_for_task, mock_validate_openscad_config, mock_get_logger)
+        
+        mock_path_exists.return_value = True
+        
+        mock_logger = TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
 
         assert mock_generate_scad_for_task.call_count == 3
         assert mock_render_scad_file.call_count == 3
         assert mock_perform_geometry_checks.call_count == 3
         calls = mock_generate_scad_for_task.call_args_list
         for call in calls:
-            assert call.args[1]['id'] == 'task2'
-        assert "Filtering tasks to: ['task2']" in caplog.text
-        assert "Filtering models" not in caplog.text
+            assert call.kwargs['task']['task_id'] == 'task2'
+        # assert "Running specified tasks: task2" in caplog.text # Removed caplog check
+        # assert "Running all configured models: model_A, model_B, model_C" in caplog.text # Removed caplog check
+
+        # Use mock_logger assertions
+        mock_logger.info.assert_any_call("Running specified tasks: task2")
+        mock_logger.info.assert_any_call("Running all configured models: model_A, model_B, model_C")
+        mock_logger.warning.assert_not_called()
 
 def test_filtering_with_model_filter(caplog):
     """Test main() logic with --models filter."""
@@ -186,21 +240,36 @@ def test_filtering_with_model_filter(caplog):
          patch('scripts.run_evaluation.perform_geometry_checks') as mock_perform_geometry_checks, \
          patch('scripts.run_evaluation.render_scad_file') as mock_render_scad_file, \
          patch('scripts.run_evaluation.generate_scad_for_task') as mock_generate_scad_for_task, \
-         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config:
+         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config, \
+         patch('scripts.run_evaluation.os.path.exists') as mock_path_exists, \
+         patch('scripts.run_evaluation.get_logger') as mock_get_logger:
 
         all_mocks = (mock_parse_args, mock_get_config, mock_load_tasks,
                      mock_assemble_final_results, mock_perform_geometry_checks, mock_render_scad_file,
-                     mock_generate_scad_for_task, mock_validate_openscad_config)
-        TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
+                     mock_generate_scad_for_task, mock_validate_openscad_config, mock_get_logger)
+        
+        mock_path_exists.return_value = True
+        
+        mock_logger = TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
 
         assert mock_generate_scad_for_task.call_count == 6
         assert mock_render_scad_file.call_count == 6
         assert mock_perform_geometry_checks.call_count == 6
         calls = mock_generate_scad_for_task.call_args_list
-        models_called = {call.args[0] for call in calls}
+        models_called = {call.kwargs['model_config']['name'] for call in calls}
         assert models_called == {'model_B', 'model_C'}
-        assert "Filtering tasks" not in caplog.text
-        assert "Filtering models to: ['model_B', 'model_C']" in caplog.text
+        # Corrected log check (order might vary in set, check both)
+        # assert ("Running specified models: model_B, model_C" in caplog.text or \ # Removed caplog check
+        #         "Running specified models: model_C, model_B" in caplog.text) # Removed caplog check
+        # assert "Running all found tasks." in caplog.text # Removed caplog check
+        
+        # Use mock_logger assertions - check if EITHER order was logged
+        try:
+            mock_logger.info.assert_any_call("Running specified models: model_B, model_C")
+        except AssertionError:
+            mock_logger.info.assert_any_call("Running specified models: model_C, model_B")
+        mock_logger.info.assert_any_call("Running all found tasks.")
+        mock_logger.warning.assert_not_called()
 
 def test_filtering_with_both_filters(caplog):
     """Test main() logic with both --tasks and --models filters."""
@@ -216,23 +285,38 @@ def test_filtering_with_both_filters(caplog):
          patch('scripts.run_evaluation.perform_geometry_checks') as mock_perform_geometry_checks, \
          patch('scripts.run_evaluation.render_scad_file') as mock_render_scad_file, \
          patch('scripts.run_evaluation.generate_scad_for_task') as mock_generate_scad_for_task, \
-         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config:
+         patch('scripts.run_evaluation.validate_openscad_config') as mock_validate_openscad_config, \
+         patch('scripts.run_evaluation.os.path.exists') as mock_path_exists, \
+         patch('scripts.run_evaluation.get_logger') as mock_get_logger:
 
         all_mocks = (mock_parse_args, mock_get_config, mock_load_tasks,
                      mock_assemble_final_results, mock_perform_geometry_checks, mock_render_scad_file,
-                     mock_generate_scad_for_task, mock_validate_openscad_config)
-        TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
+                     mock_generate_scad_for_task, mock_validate_openscad_config, mock_get_logger)
+        
+        mock_path_exists.return_value = True
+        
+        mock_logger = TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
 
         assert mock_generate_scad_for_task.call_count == 2
         assert mock_render_scad_file.call_count == 2
         assert mock_perform_geometry_checks.call_count == 2
         calls = mock_generate_scad_for_task.call_args_list
-        models_called = {call.args[0] for call in calls}
-        tasks_called = {call.args[1]['id'] for call in calls}
+        models_called = {call.kwargs['model_config']['name'] for call in calls}
+        tasks_called = {call.kwargs['task']['task_id'] for call in calls}
         assert models_called == {'model_A'}
         assert tasks_called == {'task1', 'task3'}
-        assert "Filtering tasks to: ['task1', 'task3']" in caplog.text
-        assert "Filtering models to: ['model_A']" in caplog.text
+        # Corrected log check (order might vary in set, check both)
+        # assert ("Running specified tasks: task1, task3" in caplog.text or \ # Removed caplog check
+        #         "Running specified tasks: task3, task1" in caplog.text) # Removed caplog check
+        # assert "Running specified models: model_A" in caplog.text # Removed caplog check
+
+        # Use mock_logger assertions - check if EITHER order was logged for tasks
+        try:
+            mock_logger.info.assert_any_call("Running specified tasks: task1, task3")
+        except AssertionError:
+            mock_logger.info.assert_any_call("Running specified tasks: task3, task1")
+        mock_logger.info.assert_any_call("Running specified models: model_A")
+        mock_logger.warning.assert_not_called()
 
 # Keep TestRunEvaluationArgs and TestResultAssembly as unittest.TestCase for now if they don't use caplog
 # Or convert them too if needed later.
@@ -290,38 +374,189 @@ class TestRunEvaluationArgs(unittest.TestCase):
 
 # --- Test for assemble_final_results --- #
 class TestResultAssembly(unittest.TestCase):
-    """Tests for the assemble_final_results function."""
+    """Tests focused on the assemble_final_results function."""
 
-    def test_assemble_final_results_runs(self):
-        """Test that assemble_final_results can run without basic errors."""
-        mock_logger = unittest.mock.Mock(spec=logging.Logger)
-        # Provide minimal mock data structure expected by the function
-        generation_results = [{
-            "task_id": "t1", "model": "m1", "output_path": "/path/to/t1_m1.scad",
-            "model_config_used": {"name": "m1", "provider": "p1"}, "success": True, "prompt_used": "p"
-        }]
-        render_results = [{"scad_path": "/path/to/t1_m1.scad", "stl_path": "/path/to/t1_m1.stl", "status": "Success"}]
-        check_results_map = {"/path/to/t1_m1.scad": {"check_is_watertight": True}}
-        scad_to_task_map = {"/path/to/t1_m1.scad": {"task_data": {"task_id": "t1", "reference_stl": "ref.stl"}, "model_config": {"name": "m1"}}}
+    def test_assemble_final_results_structure_and_content(self):
+        """Verify the structure and content of the assembled result entry."""
+        from scripts.run_evaluation import assemble_final_results, project_root # Import here
 
-        try:
-            # Import here to avoid issues if the module has top-level problems
-            from scripts.run_evaluation import assemble_final_results
-            final_list = assemble_final_results(
-                generation_results,
-                render_results,
-                check_results_map,
-                scad_to_task_map,
-                mock_logger # Pass the mock logger
-            )
-            # Basic check that it produced a list (content correctness not focus here)
-            self.assertIsInstance(final_list, list)
-            # Check that the logger was called (e.g., for the starting message)
-            mock_logger.info.assert_called()
-        except NameError as e:
-            self.fail(f"assemble_final_results raised NameError (likely logger issue): {e}")
-        except Exception as e:
-            self.fail(f"assemble_final_results raised unexpected exception: {e}")
+        # Create a mock logger
+        mock_logger = MagicMock(spec=logging.Logger)
+
+        # --- Input Data Mocks ---
+        task_id = "t1"
+        model_name = "m1"
+        provider = "test_provider"
+        scad_file_rel = "scad/t1_m1.scad"
+        stl_file_rel = "stl/t1_m1.stl"
+        scad_file_abs = os.path.join(project_root, scad_file_rel)
+        stl_file_abs = os.path.join(project_root, stl_file_rel)
+        summary_file_rel = "stl/t1_m1_summary.json"
+        summary_file_abs = os.path.join(project_root, summary_file_rel)
+
+        task_data = {"task_id": task_id, "reference_stl": "ref.stl", "description": "Test task"}
+        scad_to_task_map_in = {scad_file_abs: {"task_data": task_data}} # Map SCAD path to task info
+
+        gen_results_list_in = [
+            {
+                "task_id": task_id,
+                "model": f"{provider}_{model_name}", # Example identifier
+                "output_path": scad_file_abs,
+                "error": None,
+                "success": True,
+                "generation_time": 10.5,
+                "prompt_used": "Make a cube",
+                "model_config_used": {"name": model_name, "provider": provider, "temperature": 0.5, "max_tokens": 100},
+                "timestamp": "some_timestamp"
+            }
+        ]
+        render_results_list_in = [
+            {
+                "scad_path": scad_file_abs,
+                "stl_path": stl_file_abs,
+                "summary_path": summary_file_abs,
+                "status": "Success",
+                "duration": 5.2,
+                "error": None,
+                "return_code": 0,
+                "stdout": "",
+                "stderr": ""
+            }
+        ]
+        check_results = {
+            "checks": {
+                "check_render_successful": True,
+                "check_is_watertight": True,
+                "check_is_single_component": True,
+                "check_bounding_box_accurate": False,
+                "check_volume_passed": True,
+                "check_hausdorff_passed": False
+            },
+            "geometric_similarity_distance": 0.8,
+            "icp_fitness_score": 0.95,
+            "hausdorff_99p_distance": 0.6,
+            "reference_volume_mm3": 1000.0,
+            "generated_volume_mm3": 1005.0,
+            "reference_bbox_mm": [10.0, 10.0, 10.0],
+            "generated_bbox_aligned_mm": [11.0, 10.0, 10.0],
+            "error": None, # Orchestration error
+            "check_errors": ["Bbox mismatch"] # Individual check errors
+        }
+        check_results_map_in = {scad_file_abs: check_results} # Map SCAD path to check results
+
+        # --- Call the function with CORRECT ARGS ---
+        final_results_list = assemble_final_results(
+            gen_results_list_in, 
+            render_results_list_in, 
+            check_results_map_in, 
+            scad_to_task_map_in, 
+            mock_logger
+        )
+
+        # --- Assertions ---
+        self.assertEqual(len(final_results_list), 1)
+        final_entry = final_results_list[0] # Check the first (only) entry
+
+        # Verify structure (spot check some keys)
+        self.assertIn("task_id", final_entry)
+        self.assertIn("model_name", final_entry)
+        self.assertIn("llm_config", final_entry)
+        self.assertIn("output_scad_path", final_entry)
+        self.assertIn("output_stl_path", final_entry)
+        self.assertIn("output_summary_json_path", final_entry)
+        self.assertIn("render_status", final_entry)
+        self.assertIn("checks", final_entry)
+        self.assertIn("geometric_similarity_distance", final_entry)
+        self.assertIn("hausdorff_99p_distance", final_entry)
+        self.assertIn("reference_volume_mm3", final_entry)
+        self.assertIn("generation_error", final_entry)
+        self.assertIn("check_error", final_entry)
+
+        # Verify content transfer
+        self.assertEqual(final_entry["task_id"], task_id)
+        self.assertEqual(final_entry["model_name"], model_name)
+        self.assertEqual(final_entry["llm_config"]["provider"], provider)
+        self.assertEqual(final_entry["output_scad_path"], scad_file_rel)
+        self.assertEqual(final_entry["output_stl_path"], stl_file_rel)
+        self.assertEqual(final_entry["output_summary_json_path"], summary_file_rel)
+        self.assertEqual(final_entry["render_status"], "Success")
+        self.assertEqual(final_entry["checks"]["check_is_watertight"], True)
+        self.assertEqual(final_entry["checks"]["check_bounding_box_accurate"], False)
+        self.assertEqual(final_entry["geometric_similarity_distance"], 0.8)
+        self.assertEqual(final_entry["hausdorff_99p_distance"], 0.6)
+        self.assertEqual(final_entry["reference_volume_mm3"], 1000.0)
+        self.assertIsNone(final_entry["generation_error"])
+        self.assertEqual(final_entry["check_error"], "Bbox mismatch") # Combined error
+        self.assertEqual(final_entry["task_description"], "Test task")
+        self.assertEqual(final_entry["reference_stl_path"], "ref.stl")
+        mock_logger.info.assert_called() # Check logger was used
+
+    def test_assemble_final_results_check_failure(self):
+        """Test assembly when geometry check itself failed (orchestration error)."""
+        from scripts.run_evaluation import assemble_final_results, project_root
+        # Create a mock logger
+        mock_logger = MagicMock(spec=logging.Logger)
+
+        # --- Input Data Mocks ---
+        task_id = "t2"
+        model_name = "m2"
+        provider = "test_provider2"
+        scad_file_rel = "scad/t2_m2.scad"
+        stl_file_rel = "stl/t2_m2.stl"
+        scad_file_abs = os.path.join(project_root, scad_file_rel)
+        stl_file_abs = os.path.join(project_root, stl_file_rel)
+
+        task_data = {"task_id": task_id, "reference_stl": "ref2.stl"}
+        scad_to_task_map_in = {scad_file_abs: {"task_data": task_data}}
+
+        gen_results_list_in = [
+            {
+                "task_id": task_id,
+                "model": f"{provider}_{model_name}",
+                "output_path": scad_file_abs,
+                "error": None,
+                "success": True,
+                 "model_config_used": {"name": model_name, "provider": provider}
+            }
+        ]
+        render_results_list_in = [
+            {
+                "scad_path": scad_file_abs,
+                "stl_path": stl_file_abs,
+                "status": "Success",
+                "error": None
+            }
+        ]
+        # Mock geometry check failure (orchestration error)
+        check_results = {"error": "Failed to load mesh", "checks": {"check_render_successful": None}} # No checks ran
+        check_results_map_in = {scad_file_abs: check_results}
+
+        # --- Call the function with CORRECT ARGS ---
+        final_results_list = assemble_final_results(
+             gen_results_list_in,
+             render_results_list_in,
+             check_results_map_in,
+             scad_to_task_map_in,
+             mock_logger
+        )
+
+        # --- Assertions ---
+        self.assertEqual(len(final_results_list), 1)
+        final_entry = final_results_list[0]
+
+        self.assertEqual(final_entry["task_id"], task_id)
+        self.assertEqual(final_entry["model_name"], model_name)
+        self.assertEqual(final_entry["output_scad_path"], scad_file_rel)
+        self.assertEqual(final_entry["output_stl_path"], stl_file_rel)
+        self.assertEqual(final_entry["render_status"], "Success")
+        self.assertIsNone(final_entry["generation_error"])
+        self.assertEqual(final_entry["check_error"], "Failed to load mesh") # Check error propagated
+        # Checks should be None as they didn't run
+        self.assertIsNone(final_entry["checks"]["check_is_watertight"])
+        self.assertIsNone(final_entry["geometric_similarity_distance"])
+        self.assertIsNone(final_entry["hausdorff_99p_distance"])
+        mock_logger.info.assert_called()
+        mock_logger.warning.assert_called_once() # Check the warning was logged
 
 # Add more tests here for other parts of run_evaluation.py later
 # (e.g., task/model filtering logic, results assembly)
