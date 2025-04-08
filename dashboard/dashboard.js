@@ -67,19 +67,43 @@ function similarityCellRenderer(params) {
 
 // --- Chart Creation ---
 function renderSummaryCharts(metaStatistics) {
+    if (!metaStatistics || Object.keys(metaStatistics).length === 0) {
+        console.warn("No metaStatistics provided for charts.");
+        document.getElementById('charts-container').style.display = 'none'; // Hide chart container
+        // Optionally display a message
+        const chartsContainer = document.getElementById('charts-container');
+        let msgElement = document.getElementById('no-charts-msg');
+        if (!msgElement) {
+            msgElement = document.createElement('p');
+            msgElement.id = 'no-charts-msg';
+            msgElement.textContent = 'No summary statistics available to generate charts.';
+            chartsContainer.parentNode.insertBefore(msgElement, chartsContainer);
+        } else {
+            msgElement.style.display = 'block';
+        }
+        return;
+    }
+
+    // Hide no-charts message if it exists
+    const noChartsMsg = document.getElementById('no-charts-msg');
+    if (noChartsMsg) noChartsMsg.style.display = 'none';
+
+    // Show chart container
+    document.getElementById('charts-container').style.display = 'grid'; // Use grid as per HTML class
+
     const modelNames = Object.keys(metaStatistics);
 
     // Destroy existing charts if they exist
     Object.values(charts).forEach(chart => chart?.destroy());
 
-    // Extract data for charts (including new ones)
-    const successRates = modelNames.map(m => metaStatistics[m].overall_pipeline_success_rate);
-    const checksPassedRates = modelNames.map(m => metaStatistics[m].all_geo_checks_passed_rate_rel);
-    const avgChamfer = modelNames.map(m => metaStatistics[m].average_chamfer_distance); // Renamed field
-    const avgHausdorff = modelNames.map(m => metaStatistics[m].average_hausdorff_99p_distance); // New
-    const avgVolumeDiff = modelNames.map(m => metaStatistics[m].average_volume_diff_percent); // New
-    const volumePassRates = modelNames.map(m => metaStatistics[m].volume_check_pass_rate_rel); // New
-    const hausdorffPassRates = modelNames.map(m => metaStatistics[m].hausdorff_check_pass_rate_rel); // New
+    // Extract data for charts using NEW field names
+    const successRates = modelNames.map(m => metaStatistics[m].overall_pass_rate); // Use overall_pass_rate
+    const chamferPassRates = modelNames.map(m => metaStatistics[m].chamfer_pass_rate); // Use chamfer_pass_rate for checks passed chart for now
+    const avgChamfer = modelNames.map(m => metaStatistics[m].avg_chamfer); // Use avg_chamfer
+    const avgHausdorff95p = modelNames.map(m => metaStatistics[m].avg_hausdorff_95p); // Use avg_hausdorff_95p
+    // Skipping avgVolumeDiff chart for now as data isn't directly calculated
+    const volumePassRates = modelNames.map(m => metaStatistics[m].volume_pass_rate);
+    const hausdorffPassRates = modelNames.map(m => metaStatistics[m].hausdorff_pass_rate);
 
     const commonChartOptions = {
         scales: {
@@ -95,9 +119,14 @@ function renderSummaryCharts(metaStatistics) {
                         if (label) {
                              label += ': ';
                         }
-                        if (context.parsed.y !== null) {
-                            // Add % for rate charts
-                            const suffix = context.dataset.label.includes('Rate') ? '%' : '';
+                        if (context.parsed.y !== null && !isNaN(context.parsed.y)) {
+                            // Add % for rate charts, mm for distance
+                            let suffix = '';
+                            if (context.dataset.label.includes('Rate')) {
+                                suffix = '%';
+                            } else if (context.dataset.label.includes('(mm)')) {
+                                suffix = ' mm';
+                            }
                             label += context.parsed.y.toFixed(1) + suffix;
                         }
                         return label;
@@ -117,145 +146,219 @@ function renderSummaryCharts(metaStatistics) {
         scales: { y: { beginAtZero: true } }
      };
 
-     const percentDiffChartOptions = { // Use specific name for % diff
-          ...commonChartOptions,
-         scales: { y: { beginAtZero: true, ticks: { callback: value => value + '%' } } } // Y-axis as percentage diff
-      };
+     // Removed percentDiffChartOptions as chart is skipped
 
 
-    // 1. Overall Success Rate Chart
+    // 1. Overall Success Rate Chart (Canvas ID: successRateChart)
     const successCtx = document.getElementById('successRateChart').getContext('2d');
     charts.successRate = new Chart(successCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Overall Success Rate',
-                data: successRates,
+                label: 'Overall Pass Rate', // Updated Label
+                data: successRates.map(d => d === null ? NaN : d), // Handle potential nulls
                 backgroundColor: 'rgba(40, 167, 69, 0.6)', // Success green
                 borderColor: 'rgba(40, 167, 69, 1)',
                 borderWidth: 1
             }]
         },
-        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Overall Success Rate (% Tasks Fully Passed)' }}} // Add title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Overall Pass Rate (%)' }}} // Updated Title
     });
 
-    // 2. Checks Passed Rate Chart
+    // 2. Chamfer Pass Rate Chart (Using checksPassedChart canvas ID for now)
     const checksCtx = document.getElementById('checksPassedChart').getContext('2d');
     charts.checksPassed = new Chart(checksCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Metric Checks Passed Rate (Rel. to Checks Run)', // Updated label
-                // Replace nulls with NaN for Chart.js to skip them gracefully
-                 data: checksPassedRates.map(d => d === null ? NaN : d),
+                label: 'Chamfer Pass Rate', // Updated Label
+                 data: chamferPassRates.map(d => d === null ? NaN : d),
                 backgroundColor: 'rgba(255, 193, 7, 0.6)', // Warning yellow
                 borderColor: 'rgba(255, 193, 7, 1)',
                 borderWidth: 1
             }]
         },
-        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Metric Checks Passed Rate (% Rel. to Checks Run)' }}} // Updated title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Chamfer Pass Rate (% Rel. to Checks Run)' }}} // Updated title
     });
 
-    // 3. Average Chamfer Distance Chart
+    // 3. Average Chamfer Distance Chart (Canvas ID: avgSimilarityChart)
     const chamferCtx = document.getElementById('avgSimilarityChart').getContext('2d');
      charts.similarity = new Chart(chamferCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Avg Chamfer Distance (mm)',
-                // Replace nulls with NaN for Chart.js to skip them gracefully
+                label: 'Avg Chamfer Distance (mm)', // Label ok
                 data: avgChamfer.map(d => d === null ? NaN : d),
                  backgroundColor: 'rgba(153, 102, 255, 0.6)',
                 borderColor: 'rgba(153, 102, 255, 1)',
                 borderWidth: 1
             }]
         },
-         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Chamfer Distance (Lower is Better)' }}} // Add title
+         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Chamfer Distance (mm, Lower is Better)' }}} // Updated title
     });
 
-    // 4. Average Hausdorff Distance Chart
+    // 4. Average Hausdorff 95p Distance Chart (Canvas ID: avgHausdorffChart)
     const hausdorffCtx = document.getElementById('avgHausdorffChart').getContext('2d');
     charts.avgHausdorff = new Chart(hausdorffCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Avg Hausdorff 99p Distance (mm)',
-                // Replace nulls with NaN for Chart.js to skip them gracefully
-                data: avgHausdorff.map(d => d === null ? NaN : d),
+                label: 'Avg Hausdorff 95p Distance (mm)', // Updated Label (95p)
+                data: avgHausdorff95p.map(d => d === null ? NaN : d),
                  backgroundColor: 'rgba(23, 162, 184, 0.6)',
                 borderColor: 'rgba(23, 162, 184, 1)',
                 borderWidth: 1
             }]
         },
-         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Hausdorff 99p Distance (Lower is Better)' }}} // Add title
+         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Hausdorff 95p Distance (mm, Lower is Better)' }}} // Updated title
     });
 
-    // 5. Average Volume Difference Chart
-    const volumeDiffCtx = document.getElementById('avgVolumeDiffChart').getContext('2d');
-    charts.avgVolumeDiff = new Chart(volumeDiffCtx, {
-        type: 'bar',
-        data: {
-            labels: modelNames,
-            datasets: [{
-                label: 'Avg Volume Difference (%)',
-                // Replace nulls with NaN for Chart.js to skip them gracefully
-                data: avgVolumeDiff.map(d => d === null ? NaN : d),
-                 backgroundColor: 'rgba(253, 126, 20, 0.6)',
-                borderColor: 'rgba(253, 126, 20, 1)',
-                borderWidth: 1
-            }]
-        },
-         options: { ...percentDiffChartOptions, plugins: { ...percentDiffChartOptions.plugins, title: { display: true, text: 'Avg Volume Difference (% vs Reference)' }}} // Add title
-    });
+    // 5. Skipping Volume Diff Chart (Canvas ID: avgVolumeDiffChart)
+    // We can hide this canvas or reuse it later if needed.
+    const avgVolumeDiffCanvas = document.getElementById('avgVolumeDiffChart');
+    if (avgVolumeDiffCanvas && avgVolumeDiffCanvas.parentElement) {
+         avgVolumeDiffCanvas.parentElement.style.display = 'none'; // Hide the wrapper div
+    }
 
-    // 6. Volume Check Pass Rate Chart
+    // 6. Volume Pass Rate Chart (Canvas ID: volumePassRateChart)
     const volumePassCtx = document.getElementById('volumePassRateChart').getContext('2d');
     charts.volumePassRate = new Chart(volumePassCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Volume Check Pass Rate (%)',
-                // Replace nulls with NaN for Chart.js to skip them gracefully
+                label: 'Volume Pass Rate', // New Label
                 data: volumePassRates.map(d => d === null ? NaN : d),
-                 backgroundColor: 'rgba(111, 66, 193, 0.6)',
-                borderColor: 'rgba(111, 66, 193, 1)',
+                backgroundColor: 'rgba(255, 99, 132, 0.6)', // Example color
+                borderColor: 'rgba(255, 99, 132, 1)',
                 borderWidth: 1
             }]
         },
-         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Volume Check Pass Rate (% Rel. to Checks Run)' }}} // Add title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Volume Pass Rate (% Rel. to Checks Run)' }}} // Add title
     });
 
-    // 7. Hausdorff Check Pass Rate Chart
+    // 7. Hausdorff Pass Rate Chart (Canvas ID: hausdorffPassRateChart)
     const hausdorffPassCtx = document.getElementById('hausdorffPassRateChart').getContext('2d');
     charts.hausdorffPassRate = new Chart(hausdorffPassCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
             datasets: [{
-                label: 'Hausdorff Check Pass Rate (%)',
-                // Replace nulls with NaN for Chart.js to skip them gracefully
+                label: 'Hausdorff Pass Rate', // New Label
                 data: hausdorffPassRates.map(d => d === null ? NaN : d),
-                 backgroundColor: 'rgba(214, 51, 132, 0.6)',
-                borderColor: 'rgba(214, 51, 132, 1)',
+                backgroundColor: 'rgba(54, 162, 235, 0.6)', // Example color
+                borderColor: 'rgba(54, 162, 235, 1)',
                 borderWidth: 1
             }]
         },
-         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Hausdorff Check Pass Rate (% Rel. to Checks Run)' }}} // Add title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Hausdorff Pass Rate (% Rel. to Checks Run)' }}} // Add title
     });
 
-    const chartsContainer = document.getElementById('charts-container');
-    if (chartsContainer) {
-        chartsContainer.style.display = 'flex'; // Show charts container
-    } else {
-        console.error("Element with ID 'charts-container' not found when trying to display charts.");
-    }
 }
 
+
+// --- NEW: Render Summary Tables ---
+function renderSummaryTables(metaStatistics, taskStatistics) {
+    const container = document.getElementById('summary-tables-container');
+    if (!container) {
+        console.error("Summary tables container not found!");
+        return;
+    }
+    container.innerHTML = ''; // Clear previous content
+
+    // Helper to format numbers for tables
+    const fmtTable = (val, suffix = '', precision = 1) => {
+        if (val === null || typeof val === 'undefined' || isNaN(Number(val))) {
+            return 'N/A';
+        }
+        return Number(val).toFixed(precision) + suffix;
+    };
+
+    // -- Model Summary Table --
+    if (metaStatistics && Object.keys(metaStatistics).length > 0) {
+        const modelTable = document.createElement('table');
+        modelTable.className = 'summary-table'; // Add class for styling
+        const modelCaption = modelTable.createCaption();
+        modelCaption.textContent = 'Model Performance Summary';
+
+        const modelHeader = modelTable.createTHead().insertRow();
+        const modelHeaders = ['Model', 'Overall Pass (%)', 'SCAD Gen (%)', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
+        modelHeaders.forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            modelHeader.appendChild(th);
+        });
+
+        const modelBody = modelTable.createTBody();
+        for (const [modelName, stats] of Object.entries(metaStatistics)) {
+            const row = modelBody.insertRow();
+            row.insertCell().textContent = modelName;
+            row.insertCell().textContent = fmtTable(stats.overall_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.render_success_rate, '%');
+            row.insertCell().textContent = stats.checks_run_count ?? 'N/A'; // Direct count
+            row.insertCell().textContent = fmtTable(stats.chamfer_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.hausdorff_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.volume_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.avg_chamfer, ' mm', 2);
+            row.insertCell().textContent = fmtTable(stats.avg_hausdorff_95p, ' mm', 2);
+        }
+        container.appendChild(modelTable);
+    } else {
+        container.innerHTML += '<p>No model summary statistics available.</p>';
+    }
+
+    // -- Task Summary Table --
+    if (taskStatistics && Object.keys(taskStatistics).length > 0) {
+        const taskTable = document.createElement('table');
+        taskTable.className = 'summary-table'; // Add class for styling
+        const taskCaption = taskTable.createCaption();
+        taskCaption.textContent = 'Task Performance Summary (Across Models)';
+        taskTable.style.marginTop = '20px'; // Add some space between tables
+
+        const taskHeader = taskTable.createTHead().insertRow();
+        const taskHeaders = ['Task ID', 'Overall Pass (%)', 'SCAD Gen (%)', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
+        taskHeaders.forEach(text => {
+            const th = document.createElement('th');
+            th.textContent = text;
+            taskHeader.appendChild(th);
+        });
+
+        const taskBody = taskTable.createTBody();
+        // Sort tasks for consistent order (optional)
+        const sortedTaskIds = Object.keys(taskStatistics).sort(); 
+        for (const taskId of sortedTaskIds) {
+            const stats = taskStatistics[taskId];
+            const row = taskBody.insertRow();
+            row.insertCell().textContent = taskId;
+            row.insertCell().textContent = fmtTable(stats.overall_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.render_success_rate, '%');
+            row.insertCell().textContent = stats.checks_run_count ?? 'N/A'; // Direct count
+            row.insertCell().textContent = fmtTable(stats.chamfer_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.hausdorff_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.volume_pass_rate, '%');
+            row.insertCell().textContent = fmtTable(stats.avg_chamfer, ' mm', 2);
+            row.insertCell().textContent = fmtTable(stats.avg_hausdorff_95p, ' mm', 2);
+        }
+        container.appendChild(taskTable);
+    } else {
+         if (!metaStatistics || Object.keys(metaStatistics).length === 0) {
+             // Only add task message if model message wasn't already added
+             container.innerHTML += '<p>No task summary statistics available.</p>';
+         } else {
+             // Add space if model table exists but task table doesn't
+             const spacer = document.createElement('div');
+             spacer.style.height = '20px';
+             container.appendChild(spacer);
+         }
+    }
+}
+// --- END: Render Summary Tables ---
 
 // --- HTML Table Creation ---
 const SIMILARITY_THRESHOLD_MM = 1.0; // Chamfer threshold (matches default in geometry_check)
@@ -264,69 +367,42 @@ const HAUSDORFF_THRESHOLD_MM = 0.5; // Hausdorff threshold (matches geometry_che
 const VOLUME_THRESHOLD_PERCENT = 1.0; // Volume threshold (matches geometry_check.py)
 
 function createModelHtmlTable(modelName, modelResults, container) {
-    const modelHeader = document.createElement('h2');
-    modelHeader.textContent = `Model: ${modelName}`;
-    container.appendChild(modelHeader);
-
     const table = document.createElement('table');
-    table.className = 'results-table'; // Add class for styling
+    table.classList.add('results-table');
     const thead = table.createTHead();
     const tbody = table.createTBody();
 
-    // Define columns - adapt these as needed from your data structure
+    // Define Columns (aligned with NEW keys from process_results.py)
     const columns = [
         { key: 'task_id', header: 'Task ID' },
-        { key: 'scad_generation_success', header: 'SCAD Gen', format: formatBooleanText, isBoolean: true },
-        { key: 'render_success', header: 'Render OK', format: formatBooleanText, isBoolean: true }, // Use 'check_render_successful'
-        // { key: 'render_status_detail', header: 'Render Status' }, // Can be added back if needed
-        { key: 'geometry_check_run_success', header: 'Checks Run', format: formatBooleanText, isBoolean: true },
-        //{ key: 'individual_geometry_checks_passed', header: 'Metric Checks Passed', format: formatBooleanText, isBoolean: true }, // Maybe redundant with individual cols?
+        { key: 'replicate_id', header: 'Rep ID' }, // NEW Replicate ID column
+        { key: 'scad_generation_success', header: 'SCAD Gen', format: formatPassFailText, isBoolean: true }, // Use new key
+        { key: 'check_render_successful', header: 'Render OK', format: formatPassFailText, isBoolean: true }, // Use refined key
+        { key: 'checks_run_attempted', header: 'Checks Run', format: formatPassFailText, isBoolean: true }, // Use new key
+        { key: 'check_is_watertight', header: 'Watertight', format: formatPassFailText, isBoolean: true },
+        { key: 'check_is_single_component', header: 'Single Comp', format: formatPassFailText, isBoolean: true },
+        { key: 'check_bounding_box_accurate', header: 'BBox Acc.', format: formatPassFailText, isBoolean: true, tooltip: "Checks if aligned BBox dims are within tolerance" }, // Use refined key
+        { key: 'check_volume_passed', header: 'Volume Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if volume difference % is within threshold" }, // Use refined key
+        { key: 'check_hausdorff_passed', header: 'Hausdorff Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Hausdorff 95p distance is within threshold" }, // Use refined key
+        { key: 'chamfer_check_passed', header: 'Chamfer Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Chamfer distance is within threshold" }, // Use new key
 
-        // Add individual check columns dynamically if they exist
-        ...(modelResults[0]?.individual_check_statuses ?
-            Object.keys(modelResults[0].individual_check_statuses)
-              // Filter to only include the core checks we want to display individually
-              .filter(key => [
-                  'check_render_successful', // Already covered by 'Render OK'?
-                  'check_is_watertight',
-                  'check_is_single_component',
-                  'check_bounding_box_accurate',
-                  'check_volume_passed', // New
-                  'check_hausdorff_passed' // New
-                ].includes(key))
-              .map(checkKey => ({
-                key: `individual_check_statuses.${checkKey}`,
-                // Nicer Header logic
-                header: checkKey === 'check_is_single_component' ? 'Component Count' :
-                        checkKey === 'check_bounding_box_accurate' ? `BBox Acc. (< ${BOUNDING_BOX_TOLERANCE_MM.toFixed(1)}mm)` :
-                        checkKey === 'check_volume_passed' ? `Volume Passed (< ${VOLUME_THRESHOLD_PERCENT.toFixed(1)}% Diff)` :
-                        checkKey === 'check_hausdorff_passed' ? `Hausdorff Passed (< ${HAUSDORFF_THRESHOLD_MM.toFixed(1)} mm)` :
-                        checkKey.replace('check_', '')
-                                .replace(/_/g, ' ')
-                                .replace('is ', '')
-                                .replace('accurate', 'Acc.')
-                                .replace('successful', 'OK')
-                                .split(' ')
-                                .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-                                .join(' '),
-                format: formatPassFailText, // Use the Pass/Fail formatter for display text
-                isBoolean: true // Mark as boolean for styling/logic
-            })) : []),
-        // Added Chamfer Passed column
-        { key: 'chamfer_check_passed', header: `Chamfer Passed (< ${SIMILARITY_THRESHOLD_MM.toFixed(1)}mm)`, format: formatPassFailText, isBoolean: true },
-        // Removed isSimilarity: true from Chamfer distance
-        { key: 'geometric_similarity_distance', header: 'Chamfer (mm)', format: formatSimilarityText, threshold: SIMILARITY_THRESHOLD_MM }, 
-        { key: 'hausdorff_99p_distance_detail', header: 'Hausdorff (mm)', format: formatDetailText, isMetric: true }, // Display detail string
-        { key: 'volume_reference_detail', header: 'Vol Ref (mm³)', format: formatDetailText, isMetric: true }, // Display detail string
-        { key: 'volume_generated_detail', header: 'Vol Gen (mm³)', format: formatDetailText, isMetric: true }, // Display detail string
-        { key: 'bbox_reference_detail', header: 'BBox Ref (mm)', format: formatDetailText, isMetric: true }, // Display detail string
-        { key: 'bbox_generated_aligned_detail', header: 'BBox Gen Aligned (mm)', format: formatDetailText, isMetric: true }, // Display detail string
-
-        // New column for visualization command
+        { key: 'chamfer_dist', header: 'Chamfer (mm)' }, // Already formatted string
+        {
+            key: 'haus_95p_dist',
+            header: 'Hausdorff Dist (95p / 99p mm)',
+            hozAlign: "center",
+            headerHozAlign: "center",
+            // Custom handling moved inside the loop
+        },
+        { key: 'ref_vol', header: 'Vol Ref (mm³)' }, // Already formatted string
+        { key: 'gen_vol', header: 'Vol Gen (mm³)' }, // Already formatted string
+        { key: 'ref_bbox', header: 'BBox Ref (mm)' }, // Display raw array or N/A
+        { key: 'gen_bbox', header: 'BBox Gen Aligned (mm)' }, // Display raw array or N/A
         { key: 'visualize_cmd', header: 'Visualize Cmd' },
-
-        // { key: 'geometry_check_error_detail', header: 'Check Error' }, // Can be added back if needed
-        // { key: 'generation_error', header: 'Generation Error' } // Can be added back if needed
+        // Error columns (optional)
+        // { key: 'gen_err', header: 'Gen Error' },
+        // { key: 'render_err', header: 'Render Error' },
+        // { key: 'check_err', header: 'Check Error' },
     ];
 
     // Create header row
@@ -334,217 +410,175 @@ function createModelHtmlTable(modelName, modelResults, container) {
     columns.forEach(col => {
         const th = document.createElement('th');
         th.textContent = col.header;
-
+        if (col.tooltip) {
+             th.title = col.tooltip;
+        }
         headerRow.appendChild(th);
     });
 
     // Create data rows
     modelResults.forEach(result => {
         const row = tbody.insertRow();
-        let isRowFullySuccessful = true; // Assume success initially for the row
+        // Use the pre-calculated overall_passed flag from the data
+        const isRowFullySuccessful = result.overall_passed === true; 
+
         let taskIdCell = null; // To store the Task ID cell for later styling
+        let repIdCell = null; // To store the Rep ID cell
 
         columns.forEach(col => {
             const cell = row.insertCell();
-            // Handle nested keys like 'individual_check_statuses.check_manifold'
-            let rawValue = col.key.split('.').reduce((obj, key) => obj?.[key], result);
-            let displayValue;
-            let cellStatusClass = ''; // e.g., 'status-yes', 'status-no', 'status-na'
+            let rawValue = result[col.key]; // Direct access using the key
+            let displayValue = rawValue; // Default display value
+            let cellStatusClass = '';
 
-            // --- Handle specific columns ---
+            // --- Specific Column Handling ---
             if (col.key === 'visualize_cmd') {
-                const refPath = result.reference_stl_path;
-                const genPath = result.output_stl_path;
-                // Only create command if both paths exist
+                const refPath = result.ref_stl_path;
+                const genPath = result.stl_path;
                 if (refPath && genPath) {
                     const task = result.task_id || 'task';
                     const model = result.model_name || 'model';
-                    const title = `Viz: ${task}-${model} (Ref=Green, Gen=Red)`;
-                    // Construct command - assuming paths are relative to project root
-                    displayValue = `python scripts/visualize_comparison.py --ref "${refPath}" --gen "${genPath}" --title "${title}"`;
-                    cell.textContent = displayValue;
+                    const rep = result.replicate_id || 'repX';
+                    const title = `Viz: ${task}-${model}-Rep${rep} (Ref=Green, Gen=Red)`;
+                    displayValue = `python scripts/visualize_comparison.py --ref \"${refPath}\" --gen \"${genPath}\" --title \"${title}\"`;
+                    cell.textContent = "Run Cmd"; // Keep cell content short
+                    cell.title = displayValue; // Put full command in tooltip
+                    cell.style.cursor = 'pointer'; // Indicate clickable
+                    cell.onclick = () => navigator.clipboard.writeText(displayValue).then(() => alert('Command copied to clipboard!'), () => alert('Failed to copy command.'));
                 } else {
-                    displayValue = 'N/A'; // Cannot visualize if paths missing
+                    displayValue = 'N/A';
                     cell.textContent = displayValue;
-                    cellStatusClass = 'status-na';
                 }
-            } else {
-                 // Handle nested keys like 'individual_check_statuses.check_manifold'
-                 let rawValue = col.key.split('.').reduce((obj, key) => obj?.[key], result);
-    
-                // Handle formatting for other columns
-                 if (col.format) { 
-                     displayValue = col.format(rawValue);
-                     cell.textContent = displayValue;
+            } else if (col.key === 'haus_95p_dist') {
+                 const value95p = result.haus_95p_dist || 'N/A'; // Use pre-formatted value
+                 const value99p = result.haus_99p_dist || 'N/A';
+                 displayValue = `95p: ${value95p}<br>99p: ${value99p}`;
+                 if (value95p === 'N/A' && value99p === 'N/A') {
+                     cell.style.fontStyle = "italic";
+                     cell.style.color = "#888";
+                     displayValue = 'N/A';
+                     cell.innerHTML = displayValue;
                  } else {
-                     displayValue = rawValue !== null && typeof rawValue !== 'undefined' ? rawValue : 'N/A';
-                     cell.textContent = displayValue;
+                    cell.innerHTML = displayValue; // Use innerHTML for <br>
                  }
+                 cell.style.whiteSpace = 'normal';
+                 cell.style.textAlign = 'center';
+            } else if (col.key === 'ref_bbox' || col.key === 'gen_bbox') {
+                 // Format BBox arrays
+                 if (Array.isArray(rawValue)) {
+                      displayValue = `[${rawValue.map(v => parseFloat(v).toFixed(1)).join(', ')}]`;
+                      cell.textContent = displayValue;
+                 } else {
+                      cell.textContent = 'N/A';
+                 }
+            } else {
+                 // --- General Formatting and Styling ---
+                 // Use formatter if defined
+                 if (col.format) {
+                     displayValue = col.format(rawValue);
+                 } else {
+                     // Use raw value, handle null/undefined
+                     displayValue = (rawValue !== null && typeof rawValue !== 'undefined') ? rawValue : 'N/A';
+                 }
+                 cell.textContent = displayValue;
             }
 
-            // Determine cell status class for styling
-            if (displayValue === 'N/A' || rawValue === null || typeof rawValue === 'undefined') {
+            // --- Determine Cell Status Class ---
+            // Check for null, undefined, OR the specific string "N/A"
+            if (rawValue === null || typeof rawValue === 'undefined' || displayValue === 'N/A') {
                 cellStatusClass = 'status-na';
-                // N/A in certain critical columns means overall failure
-                if ([ 'scad_generation_success',
-                     'render_success',
-                     'geometry_check_run_success',
-                     `individual_check_statuses.check_is_watertight`,
-                     `individual_check_statuses.check_is_single_component`,
-                     `individual_check_statuses.check_bounding_box_accurate`,
-                     `individual_check_statuses.check_volume_passed`, // New
-                     `individual_check_statuses.check_hausdorff_passed` // New
-                    ].includes(col.key))
-                {
-                     isRowFullySuccessful = false;
-                }
             } else if (col.isBoolean) {
-                 if (rawValue === true) {
-                      cellStatusClass = 'status-yes';
-                  } else {
-                      cellStatusClass = 'status-no';
-                      // If this boolean check is required for success, mark row as failed
-                      if ([ 'scad_generation_success',
-                           'render_success',
-                           `individual_check_statuses.check_is_watertight`,
-                           `individual_check_statuses.check_is_single_component`,
-                           `individual_check_statuses.check_bounding_box_accurate`,
-                           `individual_check_statuses.check_volume_passed`, // New
-                           `individual_check_statuses.check_hausdorff_passed` // New
-                         ].includes(col.key)) {
-                           isRowFullySuccessful = false;
-                      }
-                  }
-             } else if (col.isMetric) {
-                 // Apply general styling but don't affect row success based on metric value itself
-                 // (Success determined by the boolean check columns)
-                 cellStatusClass = 'status-metric'; // Class for styling metric values if needed
-             }
+                cellStatusClass = rawValue === true ? 'status-yes' : 'status-no';
+            }
+            // Add other specific styling logic if needed (e.g., for metrics)
 
-            // Apply the status class to the current cell
-            if (cellStatusClass) { 
+            // Apply the status class
+            if (cellStatusClass) {
                 cell.classList.add(cellStatusClass);
             }
 
-            // Store the Task ID cell when we encounter it
-            if (col.key === 'task_id') {
-                taskIdCell = cell;
-            }
+            // Store specific cells for later row-level styling
+            if (col.key === 'task_id') taskIdCell = cell;
+            if (col.key === 'replicate_id') repIdCell = cell;
         });
 
-        // After processing all cells in the row, style the Task ID cell based on overall row success
+        // Style Task ID cell based on overall success
         if (taskIdCell) {
             taskIdCell.classList.add(isRowFullySuccessful ? 'status-yes' : 'status-no');
         }
+         // Optionally add styling to Rep ID cell too
+         if (repIdCell) {
+             // Example: Add subtle background based on success
+             repIdCell.style.backgroundColor = isRowFullySuccessful ? '#e6ffed' : '#ffebee'; 
+         }
     });
 
     container.appendChild(table);
 }
 
 
-// --- Dashboard Initialization (fetches data automatically) ---
+// --- Dashboard Initialization (fetch data, render) ---
 async function initializeDashboard() {
     const loadingIndicator = document.getElementById('loading-indicator');
     const errorIndicator = document.getElementById('error-indicator');
-    const chartsContainer = document.getElementById('charts-container');
     const gridsContainer = document.getElementById('grids-container');
+    const chartsContainer = document.getElementById('charts-container');
+    const runIdElement = document.getElementById('run-id');
+    const summaryContainer = document.getElementById('summary-tables-container'); // Get summary container
 
-    // Show loading indicator initially, clear errors/content
-    if (loadingIndicator) loadingIndicator.style.display = 'block';
-    if (errorIndicator) errorIndicator.style.display = 'none';
-    if (chartsContainer) chartsContainer.style.display = 'none';
-    if (gridsContainer) gridsContainer.innerHTML = '';
+    loadingIndicator.style.display = 'block';
+    errorIndicator.style.display = 'none';
+    gridsContainer.innerHTML = ''; // Clear previous grids
+    chartsContainer.style.display = 'none'; // Hide charts initially
+    summaryContainer.innerHTML = ''; // Clear previous summary tables
 
     try {
-        // Fetch data (Restored)
-        console.log("Fetching dashboard_data.json...");
-        const response = await fetch('./dashboard_data.json');
-        console.log("Fetch response status:", response.status);
+        // Fetch the processed data
+        const response = await fetch('dashboard_data.json');
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status} - Could not fetch dashboard_data.json. Make sure it exists in the dashboard/ directory and you've run scripts/process_results.py.`);
+            throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
-        console.log("Data loaded successfully:", data);
 
-        // Validate data structure (basic checks)
-        if (!data || typeof data !== 'object') {
-             throw new Error("Invalid data format: Input is not an object.");
-         }
-         if (!data.results_by_model || typeof data.results_by_model !== 'object') {
-             throw new Error("Invalid data format: Missing or invalid 'results_by_model'.");
-         }
-          if (!data.meta_statistics || typeof data.meta_statistics !== 'object') {
-             throw new Error("Invalid data format: Missing or invalid 'meta_statistics'.");
-         }
-
-
-        // Populate header
-        const runIdElement = document.getElementById('run-id');
-        if (runIdElement) {
-            // Use run_id from fetched data
-             runIdElement.textContent = `CadEval Dashboard - Run: ${data.run_id || 'Unknown'}`;
-         } else {
-             console.error("Element with ID 'run-id' not found.");
-         }
-
-        // Render charts
-        if (data.meta_statistics && Object.keys(data.meta_statistics).length > 0) {
-            console.log("Rendering summary charts...");
-            renderSummaryCharts(data.meta_statistics);
-            // Ensure container is shown after rendering
-            if (chartsContainer) chartsContainer.style.display = 'flex';
-        } else {
-            console.warn("No meta-statistics found in data.");
-            if (chartsContainer) {
-                 chartsContainer.innerHTML = '<p style="text-align:center; width:100%;">No summary statistics available.</p>';
-                 chartsContainer.style.display = 'block'; // Show the message
-            } else {
-                 console.error("Element with ID 'charts-container' not found.");
-             }
+        // Update Run ID title
+        if (data.run_id) {
+            runIdElement.textContent = `CadEval Dashboard - Run: ${data.run_id}`;
         }
 
-        // Create tables
-        if (gridsContainer && data.results_by_model && Object.keys(data.results_by_model).length > 0) {
-            console.log("Creating results tables...");
-             for (const [modelName, modelResults] of Object.entries(data.results_by_model)) {
-                 // Basic check if modelResults is an array before processing
-                 if (Array.isArray(modelResults)) {
-                     createModelHtmlTable(modelName, modelResults, gridsContainer);
-                 } else {
-                      console.warn(`Skipping table for model ${modelName}: results are not an array.`);
-                 }
-             }
-         } else if (!gridsContainer) {
-             console.error("Element with ID 'grids-container' not found.");
-        } else {
-             console.warn("No results_by_model found in data or container missing.");
-             if (gridsContainer) gridsContainer.innerHTML = '<p style="text-align:center; width:100%;">No detailed results available.</p>'; // Show message
+        // Check if data exists
+        if (!data || !data.results_by_model) { // Base check
+             throw new Error('No results_by_model data found or data format is incorrect in dashboard_data.json');
         }
 
-        // Hide loading indicator on success
-        if (loadingIndicator) loadingIndicator.style.display = 'none';
-        console.log("Dashboard initialized successfully.");
+        // Render Summary Tables using meta_statistics and task_statistics
+        renderSummaryTables(data.meta_statistics || {}, data.task_statistics || {});
+
+        // Render Charts using meta_statistics
+        renderSummaryCharts(data.meta_statistics || {}); // Pass meta_statistics, fallback to empty obj
+
+        // Render Grids for each model
+        if (Object.keys(data.results_by_model).length > 0) {
+            for (const [modelName, modelResults] of Object.entries(data.results_by_model)) {
+                createModelHtmlTable(modelName, modelResults, gridsContainer);
+            }
+        } else {
+            gridsContainer.innerHTML = '<p>No model results found in the data.</p>';
+        }
+
+        loadingIndicator.style.display = 'none';
 
     } catch (error) {
         console.error('Error initializing dashboard:', error);
-        if (loadingIndicator) loadingIndicator.style.display = 'none';
-        if (errorIndicator) {
-            errorIndicator.textContent = `Error initializing dashboard: ${error.message}`;
-            errorIndicator.style.display = 'block';
-        } else {
-             console.error("Element with ID 'error-indicator' not found.");
-         }
-         // Keep charts/grids containers hidden on error
-         if (chartsContainer) chartsContainer.style.display = 'none';
-         if (gridsContainer) gridsContainer.innerHTML = ''; // Clear grids container on error too
+        loadingIndicator.style.display = 'none';
+        errorIndicator.textContent = `Error loading dashboard data: ${error.message}. Please check console and dashboard_data.json.`;
+        errorIndicator.style.display = 'block';
+        chartsContainer.style.display = 'none'; // Ensure charts are hidden on error
+        summaryContainer.innerHTML = '<p>Failed to load dashboard summary.</p>'; // Add error to summary area too
     }
 }
 
-// --- Automatically Initialize on DOM Ready ---
-document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOM fully loaded and parsed. Initializing dashboard...");
-    initializeDashboard(); // Call initialization automatically
-});
+// --- Initialization ---
+document.addEventListener('DOMContentLoaded', initializeDashboard);
 
 // NOTE: Removed the file input handling logic.
 // Initialization now happens automatically by fetching dashboard_data.json. 

@@ -378,35 +378,37 @@ class TestGeometryChecks(unittest.TestCase):
         test_threshold = float(self.config.get('geometry_check',{}).get('similarity_threshold_mm', 1.0))
 
         # Expect 5 return values now
-        chamfer, fitness, transform, hausdorff, error = check_similarity(
+        chamfer, fitness, transform, hausdorff_95p, hausdorff_99p, error = check_similarity(
             self.gen_cube_ident_stl, self.ref_cube_stl, test_threshold, self.logger
         )
         self.assertIsNone(error)
         self.assertAlmostEqual(chamfer, 0.0, delta=0.1) # WP Changed from places=1 to delta=0.1
         self.assertGreaterEqual(fitness, 0.999) # Fitness might not be perfect 1.0
         self.assertIsNotNone(transform)
-        self.assertAlmostEqual(hausdorff, 0.0, delta=0.2) # WP Changed from places=5 to delta=0.2
+        self.assertAlmostEqual(hausdorff_95p, 0.0, delta=0.2) # Updated: check 95p
+        self.assertAlmostEqual(hausdorff_99p, 0.0, delta=0.2) # Updated: check 99p
 
     def test_check_similarity_self(self):
         """Test Check 5: Similarity on the same model file."""
         test_threshold = float(self.config.get('geometry_check',{}).get('similarity_threshold_mm', 1.0))
 
         # Expect 5 return values
-        chamfer, fitness, transform, hausdorff, error = check_similarity(
+        chamfer, fitness, transform, hausdorff_95p, hausdorff_99p, error = check_similarity(
             self.ref_cube_stl, self.ref_cube_stl, test_threshold, self.logger
         )
         self.assertIsNone(error)
         self.assertAlmostEqual(chamfer, 0.0, places=5)
         self.assertGreaterEqual(fitness, 0.999)
         self.assertIsNotNone(transform)
-        self.assertAlmostEqual(hausdorff, 0.0, places=5)
+        self.assertAlmostEqual(hausdorff_95p, 0.0, places=5) # Updated: check 95p
+        self.assertAlmostEqual(hausdorff_99p, 0.0, places=5) # Updated: check 99p
 
     def test_check_similarity_slight_diff(self):
         """Test Check 5: Similarity on slightly different models."""
         test_threshold = float(self.config.get('geometry_check',{}).get('similarity_threshold_mm', 1.0))
 
         # Expect 5 return values
-        chamfer, fitness, transform, hausdorff, error = check_similarity(
+        chamfer, fitness, transform, hausdorff_95p, hausdorff_99p, error = check_similarity(
             self.gen_cube_slight_diff_stl, self.ref_cube_stl, test_threshold, self.logger
         )
         self.assertIsNone(error)
@@ -414,20 +416,23 @@ class TestGeometryChecks(unittest.TestCase):
         self.assertLess(chamfer, 0.5) # Expect small distance
         self.assertGreaterEqual(fitness, 0.95) # Expect good fitness
         self.assertIsNotNone(transform)
-        self.assertGreater(hausdorff, 0.0) # Expect small non-zero hausdorff
-        self.assertLess(hausdorff, 1.0) # Should be reasonably small
+        self.assertGreater(hausdorff_95p, 0.0) # Updated: check 95p
+        self.assertLess(hausdorff_95p, 1.0) # Updated: check 95p
+        self.assertGreater(hausdorff_99p, 0.0) # Updated: check 99p
+        self.assertLess(hausdorff_99p, 1.0) # Updated: check 99p
 
     def test_check_similarity_diff_shape(self):
         """Test Check 5: Similarity on very different models (cube vs sphere)."""
         test_threshold = float(self.config.get('geometry_check',{}).get('similarity_threshold_mm', 1.0))
 
         # Expect 5 return values
-        chamfer, fitness, transform, hausdorff, error = check_similarity(
+        chamfer, fitness, transform, hausdorff_95p, hausdorff_99p, error = check_similarity(
             self.gen_sphere_diff_stl, self.ref_cube_stl, test_threshold, self.logger
         )
         self.assertGreater(chamfer, 0.5) # WP Reduced threshold from 1.0 
         self.assertIsNotNone(transform)
-        self.assertGreater(hausdorff, 1.0) # Expect large hausdorff
+        self.assertGreater(hausdorff_95p, 1.0) # Updated: check 95p
+        self.assertGreater(hausdorff_99p, 1.0) # Updated: check 99p
 
     # --- Tests for perform_geometry_checks (Orchestrator - Updated) ---
 
@@ -445,7 +450,7 @@ class TestGeometryChecks(unittest.TestCase):
         mock_single_comp.return_value = (True, None)
         mock_bbox.return_value = (True, [10.0, 10.0, 10.0], [10.0, 10.0, 10.0], None)
         mock_volume.return_value = (True, 1000.0, 1000.0, None)
-        mock_similarity.return_value = (0.01, 0.99, np.identity(4), 0.05, None)
+        mock_similarity.return_value = (0.01, 0.99, np.identity(4), 0.05, 0.05, None)
 
         mock_requirements = create_mock_task_requirements()
         mock_render_info = create_mock_rendering_info()
@@ -494,7 +499,7 @@ class TestGeometryChecks(unittest.TestCase):
         mock_single_comp.return_value = (True, None)
         mock_bbox.return_value = (False, None, None, "BBox check skipped") # Bbox check likely skipped
         mock_volume.return_value = (False, 1000.0, 950.0, "Generated mesh is not watertight")
-        mock_similarity.return_value = (None, None, None, None, "Similarity check skipped") # Similarity skipped
+        mock_similarity.return_value = (None, None, None, None, None, "Similarity check skipped")
 
         mock_requirements = create_mock_task_requirements()
         mock_render_info = create_mock_rendering_info()
@@ -545,7 +550,7 @@ class TestGeometryChecks(unittest.TestCase):
         # Volume check likely fails threshold
         mock_volume.return_value = (False, 1000.0, 523.6, None) # Cube vs Sphere volume approx
         # Similarity check returns large distances
-        mock_similarity.return_value = (5.0, 0.6, np.identity(4), 8.0, None) # High chamfer, high hausdorff
+        mock_similarity.return_value = (5.0, 0.6, np.identity(4), 8.0, 8.0, None)
 
         mock_requirements = create_mock_task_requirements(hausdorff_threshold_mm=0.5, volume_threshold_percent=1.0)
         mock_render_info = create_mock_rendering_info()

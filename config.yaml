@@ -18,11 +18,15 @@ llm:
     provider: openai
     temperature: 0.4
     max_tokens: 15000
+  - name: chatgpt-4o-latest
+    provider: openai
+    temperature: 0.4
+    max_tokens: 15000
   - name: claude-3-7-sonnet-20250219
     provider: anthropic
     temperature: 0.4
     max_tokens: 15000
-  - name: gemini-2.5-pro-exp-03-25
+  - name: gemini-2.5-pro-preview-03-25
     provider: google
     temperature: 0.4
     max_tokens: 15000
@@ -37,3 +41,9 @@ llm:
 geometry_check:
   bounding_box_tolerance_mm: 0.5
   icp_fitness_threshold: 1.0
+  chamfer_threshold_mm: 1.0
+  hausdorff_threshold_mm: 1.0
+  volume_threshold_percent: 1.0
+
+evaluation:
+  num_replicates: 1

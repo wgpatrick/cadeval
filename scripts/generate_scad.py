@@ -93,7 +93,8 @@ def generate_scad_for_task(
     task: Dict[str, Any], 
     model_config: Dict[str, Any],
     output_dir: str,
-    prompt_params: Optional[Dict[str, Any]] = None
+    prompt_params: Optional[Dict[str, Any]] = None,
+    replicate_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Generate OpenSCAD code for a specific task using a specific LLM.
@@ -103,6 +104,7 @@ def generate_scad_for_task(
         model_config: The model configuration dictionary
         output_dir: Directory where SCAD files should be saved
         prompt_params: Optional parameters to customize the prompt
+        replicate_id: Optional identifier for the replicate run
     
     Returns:
         A dictionary with information about the generation process and results
@@ -114,13 +116,17 @@ def generate_scad_for_task(
     # Get model information
     provider = model_config.get("provider", "").lower()
     model_name = model_config.get("name", "")
-    model_identifier = f"{provider}_{model_name.replace('-', '_')}"
+    # Sanitize provider and model name for filename usage
+    provider_safe = provider.replace("/", "_")
+    model_name_safe = model_name.replace("/", "_")
+    model_identifier_for_filename = f"{provider_safe}_{model_name_safe}"
     
     # Prepare result dictionary
     result = {
         "task_id": task_id,
-        "model": model_identifier,
+        "model": f"{provider}/{model_name}", # Use original names for result ID
         "model_config_used": model_config,
+        "replicate_id": replicate_id, # Add replicate_id to result
         "timestamp": datetime.now().isoformat(),
         "success": False,
         "output_path": None,
@@ -128,8 +134,11 @@ def generate_scad_for_task(
         "duration_seconds": None
     }
     
-    # Create output path
-    output_path = os.path.join(output_dir, f"{task_id}_{model_identifier}.scad")
+    # Create output path including replicate_id if provided
+    base_filename = f"{task_id}_{model_identifier_for_filename}"
+    if replicate_id is not None:
+        base_filename += f"_rep{replicate_id}"
+    output_path = os.path.join(output_dir, f"{base_filename}.scad")
     result["output_path"] = output_path
     
     # Format the prompt
@@ -351,7 +360,7 @@ def generate_all_scad(
                 logger.error(f"Unexpected error generating SCAD for task '{task_id}' using {provider}/{model_name}: {str(e)}")
                 results.append({
                     "task_id": task_id,
-                    "model": f"{provider}_{model_name}",
+                    "model": f"{provider}/{model_name}",
                     "timestamp": datetime.now().isoformat(),
                     "success": False,
                     "output_path": None,

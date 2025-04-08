@@ -35,13 +35,18 @@
         <div class="chart-wrapper"><canvas id="avgSimilarityChart"></canvas></div>
         <!-- Add placeholders for new charts -->
         <div class="chart-wrapper"><canvas id="avgHausdorffChart"></canvas></div>
-        <div class="chart-wrapper"><canvas id="avgVolumeDiffChart"></canvas></div>
+        <div class="chart-wrapper" style="display: none;"><canvas id="avgVolumeDiffChart"></canvas></div> <!-- Keep hidden -->
         <div class="chart-wrapper"><canvas id="volumePassRateChart"></canvas></div>
         <div class="chart-wrapper"><canvas id="hausdorffPassRateChart"></canvas></div>
     </div>
 
     <div id="grids-container">
         <!-- Tables will be generated here by JavaScript -->
+    </div>
+
+    <!-- Container for Summary Tables (Moved Here) -->
+    <div id="summary-tables-container" style="margin-top: 30px;">
+        <!-- Summary tables will be generated here -->
     </div>
 
     <!-- Load Chart.js -->

@@ -121,6 +121,7 @@ def assemble_final_results(
         # --- Initialize the final entry --- Add new fields
         final_entry = {
             "task_id": task_id,
+            "replicate_id": None, # Placeholder for replicate ID
             "model_name": model_config_used.get("name"),
             "task_description": None,
             "reference_stl_path": None,
@@ -148,6 +149,7 @@ def assemble_final_results(
             },
             "geometric_similarity_distance": None, # Chamfer
             "icp_fitness_score": None,
+            "hausdorff_95p_distance": None,
             "hausdorff_99p_distance": None, # New
             "reference_volume_mm3": None, # New
             "generated_volume_mm3": None, # New
@@ -163,6 +165,8 @@ def assemble_final_results(
             final_entry["task_description"] = task_data.get("description")
             # Keep reference STL path relative to project root as defined in YAML
             final_entry["reference_stl_path"] = task_data.get("reference_stl")
+            # Get replicate_id from the task_info (mapped from SCAD path)
+            final_entry["replicate_id"] = task_info.get("replicate_id")
 
         # --- Populate Paths (Relative to Project Root) ---
         if scad_path and os.path.isabs(scad_path):
@@ -216,6 +220,7 @@ def assemble_final_results(
             # Populate metric values
             final_entry["geometric_similarity_distance"] = check_info.get("geometric_similarity_distance")
             final_entry["icp_fitness_score"] = check_info.get("icp_fitness_score")
+            final_entry["hausdorff_95p_distance"] = check_info.get("hausdorff_95p_distance")
             final_entry["hausdorff_99p_distance"] = check_info.get("hausdorff_99p_distance") # New
             final_entry["reference_volume_mm3"] = check_info.get("reference_volume_mm3") # New
             final_entry["generated_volume_mm3"] = check_info.get("generated_volume_mm3") # New
@@ -364,91 +369,88 @@ def main():
         logger.info(f"Running all configured models: {', '.join([m.get('name','?') for m in models_to_run])}")
 
 
+    # --- Get Replicates Setting ---
+    try:
+        num_replicates = int(config.get_required('evaluation.num_replicates'))
+        if num_replicates < 1:
+            logger.warning("evaluation.num_replicates must be >= 1. Setting to 1.")
+            num_replicates = 1
+    except (ConfigError, ValueError, TypeError) as e:
+        logger.warning(f"Invalid or missing 'evaluation.num_replicates' in config ({e}). Setting to 1.")
+        num_replicates = 1
+    logger.info(f"Running {num_replicates} replicate(s) for each task/model combination.")
+
     # --- Main Evaluation Loop ---
-    total_combinations = len(tasks_to_run) * len(models_to_run)
-    logger.info(f"Starting evaluation loop for {len(tasks_to_run)} tasks and {len(models_to_run)} models... Total: {total_combinations} combinations.")
+    generation_results = []
+    scad_paths_to_render = []
+    scad_to_task_map = {}
 
-    generation_results = [] # Store results from generate_scad
-    scad_to_task_map = {} # Map scad paths back to original task data
-
-    current_combination = 0
-    for task in tasks_to_run:
-        task_id = task.get("task_id", "unknown_task")
+    for task_data in tasks_to_run:
+        task_id = task_data.get("task_id", "unknown_task")
         for model_config in models_to_run:
-            model_name = model_config.get("name", "unknown_model")
-            provider = model_config.get("provider", "unknown_provider")
-            model_identifier_for_filename = f"{provider}_{model_name}".replace("/", "_") # Sanitize for filename
+            model_identifier_for_filename = f"{model_config['provider']}_{model_config['name']}".replace("/", "_") # Sanitize for filename
+            logger.info(f"Starting Task: {task_id}, Model: {model_config['name']}")
 
-            current_combination += 1
-            logger.info(f"--- [{current_combination}/{total_combinations}] Task='{task_id}', Model='{model_name}' ---")
+            for replicate_id in range(1, num_replicates + 1):
+                logger.info(f"  Replicate {replicate_id}/{num_replicates}")
 
-            # --- 1. Generate SCAD ---
-            logger.info("  Generating SCAD...")
-            scad_filename = f"{task_id}_{model_identifier_for_filename}.scad"
-            scad_output_path = os.path.join(run_scad_dir, scad_filename) # Use new SCAD dir
+                # Generate unique filename including model and replicate ID
+                base_filename = f"{task_id}_{model_identifier_for_filename}_rep{replicate_id}"
+                scad_output_path = os.path.join(run_scad_dir, f"{base_filename}.scad")
 
-            try:
-                # Adjust the function call:
-                # - Use 'task=task' instead of 'task_data=task'
-                # - Pass 'run_scad_dir' as 'output_dir'
-                # - Remove the 'output_path' argument
-                gen_result = generate_scad_for_task(
-                    task=task,  # Correct argument name
-                    model_config=model_config,
-                    output_dir=run_scad_dir # Pass the directory path
-                    # Add prompt_params=config.get('llm.prompt_parameters') if needed
-                )
-                generation_results.append(gen_result)
+                try:
+                    # Call the correct function: generate_scad_for_task
+                    gen_result = generate_scad_for_task(
+                        task=task_data,
+                        model_config=model_config,
+                        output_dir=run_scad_dir, # Pass directory, function creates filename
+                        replicate_id=replicate_id # Pass replicate_id
+                        # config object is implicitly loaded by generate_scad_for_task
+                        # logger object is implicitly available via get_logger
+                    )
+                    generation_results.append(gen_result)
 
-                # Use the output_path returned by the function for mapping
-                scad_output_path = gen_result.get("output_path") # Get path from result
+                    # Use the path returned by the function for mapping and rendering list
+                    actual_scad_path = gen_result.get("output_path")
 
-                if gen_result.get("success") and scad_output_path:
-                    logger.info(f"  SCAD generated successfully: {os.path.basename(scad_output_path)}")
-                    # Map the *actual* generated SCAD path back to the task
-                    scad_to_task_map[scad_output_path] = {"task_data": task, "model_config": model_config}
-                elif not gen_result.get("success"):
-                    logger.error(f"  SCAD generation failed: {gen_result.get('error')}")
-                else: # Success but no path? Should not happen ideally.
-                     logger.warning(f"  SCAD generation reported success but no output path found in result.")
+                    if gen_result.get("success") and actual_scad_path and os.path.exists(actual_scad_path):
+                        logger.info(f"  SCAD generated successfully: {os.path.basename(actual_scad_path)}")
+                        scad_paths_to_render.append(actual_scad_path)
+                        # Map the actual SCAD path to task/model info
+                        scad_to_task_map[actual_scad_path] = {"task_id": task_id, "task_data": task_data, "model_config": model_config, "replicate_id": replicate_id}
+                    elif not gen_result.get("success"):
+                        logger.error(f"  SCAD generation failed for Replicate {replicate_id}: {gen_result.get('error')}")
+                    else: # Success=True but path issue
+                        logger.warning(f"  SCAD generation reported success but file path invalid/missing for Replicate {replicate_id}: {actual_scad_path}")
 
-            except Exception as e:
-                logger.error(f"  Unexpected error during SCAD generation orchestration: {e}", exc_info=True)
-                # Record failure in results (use a placeholder path if needed)
-                placeholder_filename = f"{task_id}_{model_identifier_for_filename}.scad"
-                placeholder_path = os.path.join(run_scad_dir, placeholder_filename)
-                generation_results.append({
-                    "task_id": task_id,
-                    "model": f"{provider}/{model_name}",
-                    "model_config_used": model_config,
-                    "output_path": placeholder_path, # Log the intended path
-                    "success": False,
-                    "error": f"Orchestration error: {e}",
-                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "prompt_used": None
-                })
+                except Exception as e:
+                    logger.error(f"  Unexpected error during SCAD generation orchestration for Replicate {replicate_id}: {e}", exc_info=True)
+                    # Record failure in results (use the intended path)
+                    generation_results.append({
+                        "task_id": task_id,
+                        "model": f"{model_config['provider']}/{model_config['name']}",
+                        "model_config_used": model_config,
+                        "replicate_id": replicate_id, # Add replicate ID to error result
+                        "output_path": scad_output_path, # Log the intended path
+                        "success": False,
+                        "error": f"Orchestration error: {e}",
+                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        "prompt_used": None
+                    })
 
-    # --- SCAD Generation Phase Complete ---
-    successful_generations = [res for res in generation_results if res.get("success")]
-    logger.info("--- SCAD Generation Phase Complete ---")
-    logger.info(f"Attempted {len(generation_results)} generations.")
-    logger.info(f"Successfully generated {len(successful_generations)} SCAD files.")
-
-    # --- Batch Rendering ---
+    # --- Render SCAD Files ---
     render_results = []
-    scad_files_to_render = [res.get("output_path") for res in successful_generations if res.get("output_path")]
-
-    if scad_files_to_render:
-        logger.info(f"--- Starting Batch Rendering for {len(scad_files_to_render)} SCAD files ---")
+    if scad_paths_to_render:
+        logger.info(f"--- Starting Batch Rendering for {len(scad_paths_to_render)} SCAD files ---")
         render_start_time = time.time()
 
-        for i, scad_file_path in enumerate(scad_files_to_render):
+        for i, scad_file_path in enumerate(scad_paths_to_render):
             task_info = scad_to_task_map.get(scad_file_path)
             task_id = task_info["task_data"].get("task_id", "unknown")
             model_name = task_info["model_config"].get("name", "unknown")
             scad_filename_base = os.path.basename(scad_file_path)
 
-            logger.info(f"  [{i+1}/{len(scad_files_to_render)}] Rendering Task='{task_id}', Model='{model_name}', File='{scad_filename_base}'...")
+            logger.info(f"  [{i+1}/{len(scad_paths_to_render)}] Rendering Task='{task_id}', Model='{model_name}', File='{scad_filename_base}'...")
 
             # Construct STL output path
             stl_filename = scad_filename_base.replace(".scad", ".stl")
@@ -482,7 +484,7 @@ def main():
         render_duration = time.time() - render_start_time
         successful_renders = [res for res in render_results if res.get("status") == "Success"]
         logger.info(f"--- Batch Rendering Complete ({render_duration:.2f}s) ---")
-        logger.info(f"Successfully rendered {len(successful_renders)}/{len(scad_files_to_render)} files.")
+        logger.info(f"Successfully rendered {len(successful_renders)}/{len(scad_paths_to_render)} files.")
     else:
         logger.info("Skipping rendering phase as no SCAD files were generated successfully.")
 

@@ -87,3 +87,4 @@ Thumbs.db
 
 requirements.txt
 requirements-dev.txt
+debug_output/

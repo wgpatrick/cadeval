@@ -72,10 +72,11 @@ class TestLoggerSetup(unittest.TestCase):
     def test_setup_logger(self):
         """Test the setup_logger function creates a properly configured logger."""
         test_log_file = os.path.join(self.test_log_dir, "test.log")
-        logger = setup_logger("test_logger", log_file=test_log_file)
+        logger_name = "test_setup_logger_instance" # Unique name
+        logger = setup_logger(logger_name, log_file=test_log_file)
         
         # Check that the logger has the correct name
-        self.assertEqual(logger.name, "test_logger")
+        self.assertEqual(logger.name, logger_name)
         
         # Check that the logger has the correct handlers
         self.assertEqual(len(logger.handlers), 2)  # Console and file handlers
@@ -87,8 +88,11 @@ class TestLoggerSetup(unittest.TestCase):
         test_message = "Test log message"
         logger.info(test_message)
         
-        # Add a small delay before reading
-        time.sleep(0.1)
+        # Flush and close the handlers to ensure messages are written and file is released
+        for handler in logger.handlers:
+            handler.flush()
+            handler.close()
+        time.sleep(0.05) # Shorter sleep after flush/close
         
         # Check that the message was written to the file
         with open(test_log_file, 'r') as f:
@@ -171,7 +175,7 @@ class TestLoggerSetup(unittest.TestCase):
         test_log_file = os.path.join(self.test_log_dir, "levels.log")
         
         # --- Use setup_logger to configure --- Start ---
-        logger_name = "test_levels"
+        logger_name = "test_log_levels_instance" # Unique name
         logger = setup_logger(
             name=logger_name,
             level=logging.DEBUG, # Set desired level here
@@ -203,8 +207,11 @@ class TestLoggerSetup(unittest.TestCase):
         logger.debug(debug_msg)
         logger.info(info_msg)
         
-        # Add a small delay before reading
-        time.sleep(0.1)
+        # Flush and close the handlers to ensure messages are written and file is released
+        for handler in logger.handlers:
+            handler.flush()
+            handler.close()
+        time.sleep(0.05) # Shorter sleep after flush/close
         
         # Check that DEBUG message is in file but not console
         with open(test_log_file, 'r') as f:

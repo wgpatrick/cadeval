@@ -222,22 +222,23 @@ def check_similarity(
     reference_stl_path: str,
     threshold: float,
     logger: logging.Logger
-) -> tuple[float | None, float | None, np.ndarray | None, float | None, str | None]:
+) -> tuple[float | None, float | None, np.ndarray | None, float | None, float | None, str | None]:
     """
     Check 5: Performs alignment using Global Reg (FPFH+RANSAC) + ICP Refinement
-    and calculates Chamfer distance and 99th percentile Hausdorff distance.
-    Returns (chamfer_distance, icp_fitness, transformation_matrix, hausdorff_99p, error_msg).
+    and calculates Chamfer distance, 95th and 99th percentile Hausdorff distances.
+    Returns (chamfer_distance, icp_fitness, transformation_matrix, hausdorff_95p, hausdorff_99p, error_msg).
     """
-    if not os.path.exists(generated_stl_path): return None, None, None, None, f"Generated file not found: {generated_stl_path}"
-    if not os.path.exists(reference_stl_path): return None, None, None, None, f"Reference file not found: {reference_stl_path}"
+    if not os.path.exists(generated_stl_path): return None, None, None, None, None, f"Generated file not found: {generated_stl_path}"
+    if not os.path.exists(reference_stl_path): return None, None, None, None, None, f"Reference file not found: {reference_stl_path}"
 
     if os.path.samefile(generated_stl_path, reference_stl_path):
         logger.debug("Files are identical (same path), returning zero distance, perfect fitness, identity transform")
         identity_transform = np.identity(4)
-        return 0.0, 1.0, identity_transform, 0.0, None
+        return 0.0, 1.0, identity_transform, 0.0, 0.0, None
 
     final_transformation_matrix = None # Initialize the final matrix
     icp_refinement_fitness = None # Fitness score specifically from ICP refinement
+    hausdorff_95p = None # Initialize Hausdorff 95p
     hausdorff_99p = None # Initialize Hausdorff 99p
 
     try:
@@ -245,8 +246,8 @@ def check_similarity(
         logger.debug(f"Loading meshes for similarity check: {generated_stl_path} vs {reference_stl_path}")
         generated_mesh = o3d.io.read_triangle_mesh(generated_stl_path)
         reference_mesh = o3d.io.read_triangle_mesh(reference_stl_path)
-        if not generated_mesh.has_triangles(): return None, None, None, None, "Generated mesh has no triangles"
-        if not reference_mesh.has_triangles(): return None, None, None, None, "Reference mesh has no triangles"
+        if not generated_mesh.has_triangles(): return None, None, None, None, None, "Generated mesh has no triangles"
+        if not reference_mesh.has_triangles(): return None, None, None, None, None, "Reference mesh has no triangles"
 
         # Ensure normals are computed for sampling/potential later use
         if not generated_mesh.has_vertex_normals(): generated_mesh.compute_vertex_normals()
@@ -259,7 +260,7 @@ def check_similarity(
         N_POINTS_TARGET = 50000 # Target point count for sampling
         logger.debug(f"Targeting {N_POINTS_TARGET} points for uniform sampling.")
         if not generated_mesh.has_triangles() or not reference_mesh.has_triangles():
-            return None, None, None, None, "Cannot sample points from empty mesh"
+            return None, None, None, None, None, "Cannot sample points from empty mesh"
 
         logger.debug(f"Sampling up to {N_POINTS_TARGET} points from each mesh...")
         gen_pcd = generated_mesh.sample_points_uniformly(number_of_points=N_POINTS_TARGET)
@@ -274,7 +275,7 @@ def check_similarity(
                            f"Similarity check might be inaccurate.")
             logger.warning(warning_msg)
             if actual_gen_points == 0 or actual_ref_points == 0:
-                 return None, None, None, None, "Sampling produced zero points."
+                 return None, None, None, None, None, "Sampling produced zero points."
 
         if SAVE_PCD_FOR_DEBUG:
              o3d.io.write_point_cloud(os.path.join(DEBUG_PCD_DIR, f"{run_id}_ref_sampled.ply"), ref_pcd)
@@ -282,7 +283,7 @@ def check_similarity(
 
         # --- Global Alignment (FPFH + RANSAC) ---
         # NOTE: voxel_size is critical and scale-dependent. Needs tuning. 5.0 is a starting guess.
-        voxel_size = 1.0 # WP Reduced from 5.0
+        voxel_size = 5.0 # WP Reduced from 5.0 # User request to change back to 5.0
         logger.debug(f"Starting Global Registration Preprocessing (Voxel Size: {voxel_size})...")
         gen_pcd_down, fpfh_gen = preprocess(gen_pcd, voxel_size, logger)
         ref_pcd_down, fpfh_ref = preprocess(ref_pcd, voxel_size, logger)
@@ -293,7 +294,7 @@ def check_similarity(
             logger.error(error_msg)
             # Cannot proceed with alignment, but maybe can calculate distance on unaligned clouds?
             # For now, return error. Consider fallback later if needed.
-            return None, None, None, None, error_msg
+            return None, None, None, None, None, error_msg
 
         distance_thresh = voxel_size * 1.5 # RANSAC correspondence threshold (updated based on new voxel_size)
         logger.debug(f"Running RANSAC Global Registration (Distance Threshold: {distance_thresh})...")
@@ -354,33 +355,36 @@ def check_similarity(
         if dist_gen_to_ref.size == 0 or dist_ref_to_gen.size == 0:
              logger.warning("Distance calculation resulted in empty arrays. Cannot compute metrics.")
              chamfer_distance = np.inf
+             hausdorff_95p = np.inf # Set 95p to inf
              hausdorff_99p = np.inf
         else:
              # Calculate Chamfer Distance (Average of Means)
              chamfer_distance = (np.mean(dist_gen_to_ref) + np.mean(dist_ref_to_gen)) / 2.0
              logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: Final Chamfer distance = {chamfer_distance:.6f} mm")
 
-             # Calculate 99th Percentile Hausdorff Distance
+             # Calculate Hausdorff Distances (95th and 99th Percentile)
              all_distances = np.concatenate((dist_gen_to_ref, dist_ref_to_gen))
+             hausdorff_95p = np.percentile(all_distances, 95) # Calculate 95p
              hausdorff_99p = np.percentile(all_distances, 99)
+             logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: 95th Percentile Hausdorff = {hausdorff_95p:.6f} mm")
              logger.info(f"Similarity check for {os.path.basename(generated_stl_path)}: 99th Percentile Hausdorff = {hausdorff_99p:.6f} mm")
 
         logger.info(f"ICP Refinement Fitness = {icp_refinement_fitness:.6f}") # Log fitness separately
 
         error_msg = None
-        # Note: error_msg currently only relates to Chamfer threshold, not Hausdorff
+        # Note: error_msg now only relates to Chamfer threshold, Hausdorff pass/fail handled in perform_geometry_checks
         if chamfer_distance > threshold:
              error_msg = f"Chamfer distance {chamfer_distance:.4f} mm exceeds threshold {threshold} mm"
              logger.info(f"SimilarityCheck Note: {error_msg}") # Log exceedance as info
 
-        # Return chamfer dist, ICP refinement fitness, final transform, hausdorff 99p, and potential threshold error msg
-        return chamfer_distance, icp_refinement_fitness, final_transformation_matrix, hausdorff_99p, error_msg
+        # Return chamfer dist, ICP fitness, final transform, hausdorff 95p, hausdorff 99p, and potential threshold error msg
+        return chamfer_distance, icp_refinement_fitness, final_transformation_matrix, hausdorff_95p, hausdorff_99p, error_msg
 
     except Exception as e:
         error_msg = f"Error during similarity check between {generated_stl_path} and {reference_stl_path}: {e}"
         logger.error(error_msg, exc_info=True)
         # Return None for metrics and the error message
-        return None, None, None, None, error_msg
+        return None, None, None, None, None, error_msg # Return None for both 95p and 99p
 
 def compare_aligned_bounding_boxes(
     generated_stl_path: str,
@@ -539,10 +543,11 @@ def perform_geometry_checks(
         "check_is_single_component": None,
         "check_bounding_box_accurate": None,
         "check_volume_passed": None, # New
-        "check_hausdorff_passed": None, # New
+        "check_hausdorff_passed": None, # Will be based on 95p now
         "geometric_similarity_distance": None,
         "icp_fitness_score": None,
-        "hausdorff_99p_distance": None, # New
+        "hausdorff_95p_distance": None, # New field for 95p
+        "hausdorff_99p_distance": None, # Keep 99p for info
         "reference_volume_mm3": None, # New
         "generated_volume_mm3": None, # New
         "reference_bbox_mm": None, # New
@@ -556,15 +561,25 @@ def perform_geometry_checks(
         "check_is_single_component": None,
         "check_bounding_box_accurate": None,
         "check_volume_passed": None,
-        "check_hausdorff_passed": None
+        "check_hausdorff_passed": None # Will be based on 95p now
     }
 
     final_transform = None # Variable to store transform from Similarity Check
 
     # --- Thresholds (Hardcoded for now, consider moving to config) ---
-    hausdorff_threshold = 0.5 # mm
-    volume_threshold_percent = 1.0 # %
-    logger.debug(f"Using thresholds - Hausdorff 99p: {hausdorff_threshold} mm, Volume: {volume_threshold_percent}% diff")
+    # hausdorff_threshold = 0.5 # mm (This will now apply to 95p) # OLD Hardcoded
+    # volume_threshold_percent = 1.0 # % # OLD Hardcoded
+
+    # Get thresholds from config, using defaults if not found
+    default_hausdorff = 0.5
+    default_volume_percent = 1.0
+    default_chamfer = 1.0
+
+    hausdorff_threshold = float(config.get('geometry_check.hausdorff_threshold_mm', default_hausdorff))
+    volume_threshold_percent = float(config.get('geometry_check.volume_threshold_percent', default_volume_percent))
+    chamfer_threshold_value = float(config.get('geometry_check.chamfer_threshold_mm', default_chamfer))
+
+    logger.debug(f"Using thresholds - Hausdorff 95p: {hausdorff_threshold} mm, Volume: {volume_threshold_percent}% diff, Chamfer: {chamfer_threshold_value} mm")
 
     # --- Execute Checks --- Step 1: Render Success ---
     render_status = rendering_info.get("status", "Unknown")
@@ -626,43 +641,46 @@ def perform_geometry_checks(
     # Consider skipping if watertight check failed? Current logic proceeds.
     else:
         try:
-            similarity_key = 'geometry_check.similarity_threshold_mm'
-            default_sim_thresh = DEFAULT_CONFIG.get('geometry_check', {}).get('similarity_threshold_mm', 1.0)
-            chamfer_threshold_value = float(config.get(similarity_key, default_sim_thresh))
+            # similarity_key = 'geometry_check.similarity_threshold_mm' # Old key name
+            # default_sim_thresh = DEFAULT_CONFIG.get('geometry_check', {}).get('similarity_threshold_mm', 1.0) # Old way
+            # chamfer_threshold_value = float(config.get(similarity_key, default_sim_thresh)) # Old way, now read above
 
-            chamfer_dist, icp_fitness, final_transform, hausdorff_99p, sim_error = check_similarity(
+            chamfer_dist, icp_fitness, final_transform, hausdorff_95p, hausdorff_99p, sim_error = check_similarity(
                  generated_stl_path,
                  reference_stl_path,
-                 chamfer_threshold_value,
+                 chamfer_threshold_value, # Use value read from config
                  logger
             )
             # Store raw values
             check_results["geometric_similarity_distance"] = chamfer_dist
             check_results["icp_fitness_score"] = icp_fitness
-            check_results["hausdorff_99p_distance"] = hausdorff_99p
+            check_results["hausdorff_95p_distance"] = hausdorff_95p # Store 95p
+            check_results["hausdorff_99p_distance"] = hausdorff_99p # Store 99p
 
-            # Perform Hausdorff check
-            if hausdorff_99p is not None and not np.isinf(hausdorff_99p):
-                is_hausdorff_passed = hausdorff_99p <= hausdorff_threshold
+            # Perform Hausdorff check using 95p
+            if hausdorff_95p is not None and not np.isinf(hausdorff_95p):
+                is_hausdorff_passed = hausdorff_95p <= hausdorff_threshold # Use 95p for check
                 check_results["check_hausdorff_passed"] = is_hausdorff_passed
                 check_results["checks"]["check_hausdorff_passed"] = is_hausdorff_passed
                 if not is_hausdorff_passed:
-                    check_results["check_errors"].append(f"HausdorffCheck: 99p distance {hausdorff_99p:.4f} mm exceeds threshold {hausdorff_threshold} mm")
+                    # Update error message to reflect 95p
+                    check_results["check_errors"].append(f"HausdorffCheck: 95p distance {hausdorff_95p:.4f} mm exceeds threshold {hausdorff_threshold} mm")
             else:
                 check_results["check_hausdorff_passed"] = False # Treat None/inf as failure
                 check_results["checks"]["check_hausdorff_passed"] = False
-                check_results["check_errors"].append(f"HausdorffCheck: Calculation failed or resulted in infinity.")
+                check_results["check_errors"].append(f"HausdorffCheck: 95p calculation failed or resulted in infinity.")
 
             # Handle similarity check errors (e.g., alignment failure)
-            if sim_error and "exceeds threshold" not in sim_error:
+            if sim_error and "exceeds threshold" not in sim_error: # Ignore chamfer threshold error here
                  check_results["check_errors"].append(f"SimilarityCheck Error: {sim_error}")
                  final_transform = None # Don't trust transform if similarity calc failed
-            # Chamfer threshold exceedance is noted internally by check_similarity
+            # Note: Chamfer threshold exceedance error message comes directly from sim_error if present
+            elif sim_error and "exceeds threshold" in sim_error:
+                 check_results["check_errors"].append(f"SimilarityCheck Note: {sim_error}")
 
         except (ConfigError, ValueError, TypeError) as e:
              logger.error(f"Invalid configuration for key '{similarity_key}': {e}", exc_info=True)
              check_results["check_errors"].append(f"SimilarityCheck: Invalid threshold config - {e}")
-             final_transform = None
              check_results["check_hausdorff_passed"] = False
              check_results["checks"]["check_hausdorff_passed"] = False
         except Exception as e:
@@ -670,7 +688,8 @@ def perform_geometry_checks(
             check_results["check_errors"].append(f"SimilarityCheck: Unhandled Exception - {e}")
             check_results["geometric_similarity_distance"] = None
             check_results["icp_fitness_score"] = None
-            check_results["hausdorff_99p_distance"] = None
+            check_results["hausdorff_95p_distance"] = None # None on error
+            check_results["hausdorff_99p_distance"] = None # None on error
             check_results["check_hausdorff_passed"] = False
             check_results["checks"]["check_hausdorff_passed"] = False
             final_transform = None

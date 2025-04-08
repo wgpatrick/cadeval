@@ -39,17 +39,13 @@ h2 {
 
 /* Chart Styles */
 #charts-container {
-    display: none; /* Hidden until data loads */
-    flex-wrap: wrap;
+    display: grid; /* Use grid instead of flex */
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); /* Create responsive columns */
     gap: 20px;
-    justify-content: space-around;
     margin-bottom: 30px;
 }
 
 .chart-wrapper {
-    flex: 1 1 300px; /* Allow charts to grow/shrink, base size 300px */
-    min-width: 280px;
-    max-width: 400px; /* Prevent charts from getting too wide */
     height: 300px; /* Fixed height for consistency */
     background-color: #fff;
     padding: 15px;
@@ -148,4 +144,47 @@ h2 {
 .results-table td.status-na {
     background-color: #e2e3e5;
     font-style: italic;
+}
+
+/* Add styles for the summary tables */
+.summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px; /* Space below table */
+    font-size: 0.9em;
+    box-shadow: 0 2px 3px rgba(0,0,0,0.1);
+    background-color: #fff; /* White background */
+}
+
+.summary-table caption {
+    font-size: 1.1em;
+    font-weight: bold;
+    padding: 10px;
+    caption-side: top;
+    text-align: left;
+    color: #555;
+    background-color: #f8f9fa;
+    border-top-left-radius: 8px; /* Match table rounding */
+    border-top-right-radius: 8px;
+}
+
+.summary-table th,
+.summary-table td {
+    border: 1px solid #ddd;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: middle;
+}
+
+.summary-table th {
+    background-color: #e9ecef; /* Slightly darker header */
+    font-weight: bold;
+}
+
+.summary-table tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.summary-table tbody tr:hover {
+    background-color: #f1f1f1;
 } 

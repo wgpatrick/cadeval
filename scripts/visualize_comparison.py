@@ -108,7 +108,7 @@ def load_and_align(ref_path, gen_path, n_points=50000):
 
     # --- Global Alignment (FPFH + RANSAC) ---
     try:
-        voxel_size = 1.0 # WP Changed from 5.0 to match geometry_check.py
+        voxel_size = 5.0 # WP Changed from 5.0 to match geometry_check.py # User request to change back to 5.0
         logger.info(f"Starting Global Registration Preprocessing (Voxel Size: {voxel_size})...")
         gen_pcd_down, fpfh_gen = preprocess(gen_pcd, voxel_size, logger)
         ref_pcd_down, fpfh_ref = preprocess(ref_pcd, voxel_size, logger)
