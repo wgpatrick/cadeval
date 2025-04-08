@@ -118,10 +118,10 @@ def assemble_final_results(
         render_info = render_results_map.get(scad_path) if scad_path else None
         check_info = check_results_map.get(scad_path) if scad_path else None
 
-        # --- Initialize the final entry --- Add new fields
+        # --- Initialize the final entry --- (Reverted)
         final_entry = {
             "task_id": task_id,
-            "replicate_id": None, # Placeholder for replicate ID
+            "replicate_id": None,
             "model_name": model_config_used.get("name"),
             "task_description": None,
             "reference_stl_path": None,
@@ -159,13 +159,11 @@ def assemble_final_results(
             "check_error": None # Consolidated check errors
         }
 
-        # --- Populate from Task Info (if available) ---
+        # --- Populate from Task Info (if available) --- (Reverted)
         if task_info:
             task_data = task_info.get("task_data", {})
             final_entry["task_description"] = task_data.get("description")
-            # Keep reference STL path relative to project root as defined in YAML
             final_entry["reference_stl_path"] = task_data.get("reference_stl")
-            # Get replicate_id from the task_info (mapped from SCAD path)
             final_entry["replicate_id"] = task_info.get("replicate_id")
 
         # --- Populate Paths (Relative to Project Root) ---

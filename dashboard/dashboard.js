@@ -5,7 +5,8 @@ let charts = {
     avgHausdorff: null,
     avgVolumeDiff: null,
     volumePassRate: null,
-    hausdorffPassRate: null
+    hausdorffPassRate: null,
+    taskSuccessRate: null
 };
 
 // --- Helper Functions ---
@@ -66,7 +67,7 @@ function similarityCellRenderer(params) {
 
 
 // --- Chart Creation ---
-function renderSummaryCharts(metaStatistics) {
+function renderSummaryCharts(metaStatistics, taskStatistics) {
     if (!metaStatistics || Object.keys(metaStatistics).length === 0) {
         console.warn("No metaStatistics provided for charts.");
         document.getElementById('charts-container').style.display = 'none'; // Hide chart container
@@ -84,17 +85,21 @@ function renderSummaryCharts(metaStatistics) {
         return;
     }
 
-    // Hide no-charts message if it exists
+    // Hide no-charts message if it exists and we have some data
     const noChartsMsg = document.getElementById('no-charts-msg');
-    if (noChartsMsg) noChartsMsg.style.display = 'none';
+    if (noChartsMsg && (metaStatistics || taskStatistics) && (Object.keys(metaStatistics || {}).length > 0 || Object.keys(taskStatistics || {}).length > 0) ) {
+        noChartsMsg.style.display = 'none';
+    }
 
-    // Show chart container
-    document.getElementById('charts-container').style.display = 'grid'; // Use grid as per HTML class
-
-    const modelNames = Object.keys(metaStatistics);
+    // Show chart container if we have any stats
+    if ((metaStatistics && Object.keys(metaStatistics).length > 0) || (taskStatistics && Object.keys(taskStatistics).length > 0)) {
+        document.getElementById('charts-container').style.display = 'grid'; // Use grid as per HTML class
+    }
 
     // Destroy existing charts if they exist
     Object.values(charts).forEach(chart => chart?.destroy());
+
+    const modelNames = Object.keys(metaStatistics);
 
     // Extract data for charts using NEW field names
     const successRates = modelNames.map(m => metaStatistics[m].overall_pass_rate); // Use overall_pass_rate
@@ -258,6 +263,41 @@ function renderSummaryCharts(metaStatistics) {
         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Hausdorff Pass Rate (% Rel. to Checks Run)' }}} // Add title
     });
 
+    // --- Task Chart Logic (NEW) --- Start ---
+    if (taskStatistics && Object.keys(taskStatistics).length > 0) {
+        // Sort tasks for consistent chart order
+        const sortedTaskIds = Object.keys(taskStatistics).sort();
+        const taskSuccessRates = sortedTaskIds.map(taskId => taskStatistics[taskId].overall_pass_rate);
+        
+        const taskSuccessCtx = document.getElementById('taskSuccessRateChart').getContext('2d');
+        charts.taskSuccessRate = new Chart(taskSuccessCtx, {
+            type: 'bar',
+            data: {
+                labels: sortedTaskIds,
+                datasets: [{
+                    label: 'Overall Pass Rate',
+                    data: taskSuccessRates.map(d => d ?? NaN), // Handle potential null/NaN
+                    backgroundColor: 'rgba(75, 192, 192, 0.6)', // Example color (teal)
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: { 
+                ...rateChartOptions, // Use rate options (0-100% scale)
+                plugins: { 
+                    ...rateChartOptions.plugins, 
+                    title: { display: true, text: 'Overall Pass Rate (%) by Task (Across Models)' } // Specific title
+                }
+            }
+        });
+    } else {
+        // Optionally hide the task chart canvas if no data
+        const taskChartCanvas = document.getElementById('taskSuccessRateChart');
+        if (taskChartCanvas && taskChartCanvas.parentElement) {
+            taskChartCanvas.parentElement.style.display = 'none';
+        }
+    }
+    // --- Task Chart Logic (NEW) --- End ---
 }
 
 
@@ -524,7 +564,7 @@ async function initializeDashboard() {
     const gridsContainer = document.getElementById('grids-container');
     const chartsContainer = document.getElementById('charts-container');
     const runIdElement = document.getElementById('run-id');
-    const summaryContainer = document.getElementById('summary-tables-container'); // Get summary container
+    const summaryContainer = document.getElementById('summary-tables-container');
 
     loadingIndicator.style.display = 'block';
     errorIndicator.style.display = 'none';
@@ -553,13 +593,21 @@ async function initializeDashboard() {
         // Render Summary Tables using meta_statistics and task_statistics
         renderSummaryTables(data.meta_statistics || {}, data.task_statistics || {});
 
-        // Render Charts using meta_statistics
-        renderSummaryCharts(data.meta_statistics || {}); // Pass meta_statistics, fallback to empty obj
+        // Render Charts using meta_statistics AND task_statistics
+        renderSummaryCharts(data.meta_statistics || {}, data.task_statistics || {}); // Pass both stats objects
 
         // Render Grids for each model
         if (Object.keys(data.results_by_model).length > 0) {
             for (const [modelName, modelResults] of Object.entries(data.results_by_model)) {
-                createModelHtmlTable(modelName, modelResults, gridsContainer);
+                // --- Add Model Header BACK --- Start ---
+                const modelHeader = document.createElement('h2');
+                modelHeader.textContent = `Model: ${modelName}`;
+                gridsContainer.appendChild(modelHeader);
+                // --- Add Model Header BACK --- End ---
+
+                // Create the table/grid itself (function assumes it appends to gridsContainer indirectly or needs it passed)
+                // Assuming createModelHtmlTable takes the container now:
+                createModelHtmlTable(modelName, modelResults, gridsContainer); 
             }
         } else {
             gridsContainer.innerHTML = '<p>No model results found in the data.</p>';

@@ -1,0 +1,15 @@
+task_id: "task12" # e.g., widget_01, bracket_complex_v2
+description: "I’m making a t-handle holder for taps. It’s going to be made with a few operations and I will let you know them one by one.
+
+First, the shank of holder is a cylinder that is 15mm in diameter and 60mm long. 
+
+Next, add a hole at one end of the shank. The center of the hole, should be the center of the shank. The diameter of the hole is 8mm and the depth of the hole is 25mm into the shank.
+
+Next, at the end of the shank with the hole, we’re going to add a 1mm chamfer to the outside edge of the shank.
+
+Finally, we need to add a the t-handle to the other side of the shank from the hole. The handle is a cylinder 60mm long and 5mm in diameter. It goes through the shank and is positioned orthogonally to the shank to make a T shape. The center of the handle is positioned 5.5mm from the end of the shank (such that handle goes through the shank). The handle and shank are joined in a union to make 1 part."
+reference_stl: "./reference/task12.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [60,15,60] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.

@@ -1,0 +1,7 @@
+task_id: "task15" # e.g., widget_01, bracket_complex_v2
+description: "This part is made using a loft operation. The two profiles for the loft operation are a square and a circle. They are placed on planes parallel to one another and separated by 40 mm. The circle is 40mm in diameter and the square is 30mm on each side. The two shapes are positioned directly over one another. In other words the line that connects their center points is orthogonal to the two parallel planes."
+reference_stl: "./reference/task15.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [40,40,40] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.

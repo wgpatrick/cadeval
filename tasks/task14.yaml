@@ -1,0 +1,11 @@
+task_id: "task14" # e.g., widget_01, bracket_complex_v2
+description: "This part is made by revolving a triangle around an axis by 180 degrees. 
+
+The triangle is equilateral (30mm per side).
+
+One of the sides of the triangle is positioned orthogonally to the axis of rotation. The corner of the triangle closest to the axis is 30mm away from the axis. "
+reference_stl: "./reference/task14.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [120,60,25.981] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
