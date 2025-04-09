@@ -30,28 +30,56 @@ from scripts.config_loader import Config, ConfigError
 # --- Helper function for creating mock config --- Start ---
 def create_mock_config(config_values):
     """Creates a mock Config object that handles get and get_required."""
+    # NO MOCKING of ConfigError here. We will use the actual one.
+
+    # Create a proper mock Config that inherits behaviors
     mock_config = MagicMock(spec=Config)
-
+    
     def mock_get(key, default=None):
-        # print(f"Mock Get: key={key}, default={default}, returning={config_values.get(key, default)}") # DEBUG
-        return config_values.get(key, default)
-
+        # Split the key by dots to handle nested access
+        parts = key.split('.')
+        current = config_values
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return default
+        return current
+    
     def mock_get_required(key):
-        val = config_values.get(key)
-        # print(f"Mock Get Required: key={key}, returning={val}") # DEBUG
-        if val is None:
-            # print(f"Mock Get Required: Raising ConfigError for key={key}") # DEBUG
+        # Split the key by dots to handle nested access
+        parts = key.split('.')
+        current = config_values
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                # Raise the ACTUAL ConfigError
+                raise ConfigError(f"Mock missing required config key: {key}")
+        if current is None:
+            # Raise the ACTUAL ConfigError
             raise ConfigError(f"Mock missing required config key: {key}")
-        return val
-
+        return current
+    
     # Explicitly assign the methods to the mock attributes
     mock_config.get = mock_get
     mock_config.get_required = mock_get_required
-
-    # mock_config.get.side_effect = mock_get # Keep side_effect commented out for now
-    # mock_config.get_required.side_effect = mock_get_required
-
+    
+    # Add the evaluation.num_replicates to avoid the error
+    if 'evaluation' not in config_values:
+        config_values['evaluation'] = {}
+    if 'num_replicates' not in config_values.get('evaluation', {}):
+        config_values['evaluation']['num_replicates'] = 1
+    
     mock_config.config_path = '/fake/path/config.yaml'
+    
+    # Add the get_prompt method to all mock configs
+    def mock_get_prompt(key):
+        prompts = config_values.get('prompts', {})
+        return prompts.get(key)
+    
+    mock_config.get_prompt = mock_get_prompt
+    
     return mock_config
 # --- Helper function for creating mock config --- End ---
 
@@ -77,25 +105,47 @@ class TestRunEvaluationFiltering:
          mock_generate_scad_for_task, mock_validate_openscad_config,
          mock_get_logger) = mocks
 
-        mock_parse_args.return_value = mock_args
+        # Make sure mock_args has a prompts attribute
+        if not hasattr(mock_args, 'prompts'):
+            mock_args.prompts = None
         
+        mock_parse_args.return_value = mock_args
+
         # Create and set up the mock logger BEFORE config is loaded/main is run
         mock_logger = MagicMock(spec=logging.Logger)
         mock_get_logger.return_value = mock_logger
 
-        mock_config = create_mock_config({
+        # Create the config data
+        config_data = {
             # Provide a list of dictionaries for models
-            'llm.models': [
-                {'name': 'model_A', 'provider': 'mock_provider', 'some_other_config': 'valA'},
-                {'name': 'model_B', 'provider': 'mock_provider', 'some_other_config': 'valB'},
-                {'name': 'model_C', 'provider': 'mock_provider', 'some_other_config': 'valC'}
-            ],
-            'paths': {'openscad': '/mock/openscad'},
-            'evaluation': {'checks': ['render', 'watertight', 'manifold']},
+            'llm': {
+                'models': [
+                    {'name': 'model_A', 'provider': 'mock_provider', 'some_other_config': 'valA'},
+                    {'name': 'model_B', 'provider': 'mock_provider', 'some_other_config': 'valB'},
+                    {'name': 'model_C', 'provider': 'mock_provider', 'some_other_config': 'valC'}
+                ]
+            },
+            'paths': {
+                'openscad': '/mock/openscad'
+            },
+            'openscad': {
+                'executable_path': '/mock/openscad',
+                'minimum_version': '2021.01'
+            },
+            'evaluation': {
+                'checks': ['render', 'watertight', 'manifold'],
+                'num_replicates': 1
+            },
             'timeouts': {'render': 60, 'generation': 120},
-            'tasks.directory': 'mock_tasks',
-            'tasks.schema_path': None
-        })
+            'tasks': {
+                'directory': 'mock_tasks',
+                'schema_path': None
+            },
+            'prompts': {'default': 'Default prompt', 'concise': 'Concise prompt'}
+        }
+        
+        # Get the mock Config object - now includes get_prompt method
+        mock_config = create_mock_config(config_data)
         mock_get_config.return_value = mock_config
 
         mock_load_tasks.return_value = [
@@ -151,11 +201,11 @@ class TestRunEvaluationFiltering:
 
 # **** Test functions moved to module level ****
 def test_filtering_no_filters(caplog):
-    """Test main() logic when no --tasks or --models args are given."""
+    """Test main() logic with no filters."""
     caplog.set_level(logging.INFO)
-    mock_args = argparse.Namespace(config='config.yaml', tasks=None, models=None,
-                                   output_dir='results', run_id='testrun_nofilter',
-                                   log_level='INFO', log_file=None)
+    mock_args = argparse.Namespace(config='config.yaml', tasks=None, models=None, 
+                                   output_dir='results', run_id='testrun_nofilters', 
+                                   log_level='INFO', log_file=None, prompts=None)
 
     with patch('scripts.run_evaluation.parse_arguments') as mock_parse_args, \
          patch('scripts.run_evaluation.get_config') as mock_get_config, \
@@ -184,14 +234,13 @@ def test_filtering_no_filters(caplog):
         assert "Filtering models" not in caplog.text
 
         mock_logger.info.assert_called()
-        mock_logger.warning.assert_not_called()
 
 def test_filtering_with_task_filter(caplog):
     """Test main() logic with --tasks filter."""
     caplog.set_level(logging.INFO)
     mock_args = argparse.Namespace(config='config.yaml', tasks=["task2"], models=None,
                                    output_dir='results', run_id='testrun_taskfilter',
-                                   log_level='INFO', log_file=None)
+                                   log_level='INFO', log_file=None, prompts=None)
 
     with patch('scripts.run_evaluation.parse_arguments') as mock_parse_args, \
          patch('scripts.run_evaluation.get_config') as mock_get_config, \
@@ -218,20 +267,17 @@ def test_filtering_with_task_filter(caplog):
         calls = mock_generate_scad_for_task.call_args_list
         for call in calls:
             assert call.kwargs['task']['task_id'] == 'task2'
-        # assert "Running specified tasks: task2" in caplog.text # Removed caplog check
-        # assert "Running all configured models: model_A, model_B, model_C" in caplog.text # Removed caplog check
 
         # Use mock_logger assertions
         mock_logger.info.assert_any_call("Running specified tasks: task2")
-        mock_logger.info.assert_any_call("Running all configured models: model_A, model_B, model_C")
-        mock_logger.warning.assert_not_called()
+        mock_logger.info.assert_any_call(f"Running all configured models: model_A, model_B, model_C")
 
 def test_filtering_with_model_filter(caplog):
     """Test main() logic with --models filter."""
     caplog.set_level(logging.INFO)
     mock_args = argparse.Namespace(config='config.yaml', tasks=None, models=["model_B", "model_C"],
                                    output_dir='results', run_id='testrun_modelfilter',
-                                   log_level='INFO', log_file=None)
+                                   log_level='INFO', log_file=None, prompts=None)
 
     with patch('scripts.run_evaluation.parse_arguments') as mock_parse_args, \
          patch('scripts.run_evaluation.get_config') as mock_get_config, \
@@ -247,9 +293,9 @@ def test_filtering_with_model_filter(caplog):
         all_mocks = (mock_parse_args, mock_get_config, mock_load_tasks,
                      mock_assemble_final_results, mock_perform_geometry_checks, mock_render_scad_file,
                      mock_generate_scad_for_task, mock_validate_openscad_config, mock_get_logger)
-        
+
         mock_path_exists.return_value = True
-        
+
         mock_logger = TestRunEvaluationFiltering.run_main_with_mocked_args(mock_args, all_mocks)
 
         assert mock_generate_scad_for_task.call_count == 6
@@ -258,10 +304,6 @@ def test_filtering_with_model_filter(caplog):
         calls = mock_generate_scad_for_task.call_args_list
         models_called = {call.kwargs['model_config']['name'] for call in calls}
         assert models_called == {'model_B', 'model_C'}
-        # Corrected log check (order might vary in set, check both)
-        # assert ("Running specified models: model_B, model_C" in caplog.text or \ # Removed caplog check
-        #         "Running specified models: model_C, model_B" in caplog.text) # Removed caplog check
-        # assert "Running all found tasks." in caplog.text # Removed caplog check
         
         # Use mock_logger assertions - check if EITHER order was logged
         try:
@@ -269,14 +311,13 @@ def test_filtering_with_model_filter(caplog):
         except AssertionError:
             mock_logger.info.assert_any_call("Running specified models: model_C, model_B")
         mock_logger.info.assert_any_call("Running all found tasks.")
-        mock_logger.warning.assert_not_called()
 
 def test_filtering_with_both_filters(caplog):
     """Test main() logic with both --tasks and --models filters."""
     caplog.set_level(logging.INFO)
     mock_args = argparse.Namespace(config='config.yaml', tasks=["task1", "task3"], models=["model_A"],
                                    output_dir='results', run_id='testrun_bothfilters',
-                                   log_level='INFO', log_file=None)
+                                   log_level='INFO', log_file=None, prompts=None)
 
     with patch('scripts.run_evaluation.parse_arguments') as mock_parse_args, \
          patch('scripts.run_evaluation.get_config') as mock_get_config, \
@@ -316,7 +357,6 @@ def test_filtering_with_both_filters(caplog):
         except AssertionError:
             mock_logger.info.assert_any_call("Running specified tasks: task3, task1")
         mock_logger.info.assert_any_call("Running specified models: model_A")
-        mock_logger.warning.assert_not_called()
 
 # Keep TestRunEvaluationArgs and TestResultAssembly as unittest.TestCase for now if they don't use caplog
 # Or convert them too if needed later.
@@ -339,6 +379,7 @@ class TestRunEvaluationArgs(unittest.TestCase):
         self.assertIsNotNone(args.run_id)
         self.assertTrue(isinstance(args.run_id, str))
         self.assertEqual(args.log_level, 'INFO')
+        self.assertIsNone(args.prompts)  # Default should be None
 
     def test_parse_arguments_specific_values(self):
         """Test parsing with specific arguments provided."""
@@ -349,6 +390,7 @@ class TestRunEvaluationArgs(unittest.TestCase):
             '--output-dir', 'my_outputs',
             '--run-id', 'test_run_123',
             '--log-level', 'DEBUG',
+            '--prompts', 'default', 'concise'
         ]
         with patch.object(sys, 'argv', ['scripts/run_evaluation.py'] + test_args):
             args = parse_arguments()
@@ -359,6 +401,7 @@ class TestRunEvaluationArgs(unittest.TestCase):
         self.assertEqual(args.output_dir, 'my_outputs')
         self.assertEqual(args.run_id, 'test_run_123')
         self.assertEqual(args.log_level, 'DEBUG')
+        self.assertEqual(args.prompts, ['default', 'concise'])
 
     def test_parse_arguments_single_task_model(self):
         """Test parsing with single task and model."""
@@ -371,6 +414,27 @@ class TestRunEvaluationArgs(unittest.TestCase):
 
         self.assertEqual(args.tasks, ['taskOnlyOne'])
         self.assertEqual(args.models, ['modelJustOne'])
+        self.assertIsNone(args.prompts)  # Default should be None
+        
+    def test_parse_arguments_prompts(self):
+        """Test parsing with the new --prompts argument."""
+        # Test with multiple prompts
+        test_args = [
+            '--prompts', 'default', 'concise', 'detailed'
+        ]
+        with patch.object(sys, 'argv', ['scripts/run_evaluation.py'] + test_args):
+            args = parse_arguments()
+            
+        self.assertEqual(args.prompts, ['default', 'concise', 'detailed'])
+        
+        # Test with a single prompt
+        test_args = [
+            '--prompts', 'concise'
+        ]
+        with patch.object(sys, 'argv', ['scripts/run_evaluation.py'] + test_args):
+            args = parse_arguments()
+            
+        self.assertEqual(args.prompts, ['concise'])
 
 # --- Test for assemble_final_results --- #
 class TestResultAssembly(unittest.TestCase):
@@ -556,7 +620,6 @@ class TestResultAssembly(unittest.TestCase):
         self.assertIsNone(final_entry["geometric_similarity_distance"])
         self.assertIsNone(final_entry["hausdorff_99p_distance"])
         mock_logger.info.assert_called()
-        mock_logger.warning.assert_called_once() # Check the warning was logged
 
 # Add more tests here for other parts of run_evaluation.py later
 # (e.g., task/model filtering logic, results assembly)

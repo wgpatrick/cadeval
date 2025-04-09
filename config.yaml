@@ -1,4 +1,23 @@
 # CadEval Configuration
+
+# --- New Prompts Section --- Start ---
+prompts:
+  default: |
+    Create a valid OpenSCAD script that models the following 3D object, described below: {description}
+
+    IMPORTANT: Create only a SINGLE part/model in this script. Do not include multiple unconnected components.
+
+    Reminders:
+    - Ensure the model is manifold and watertight
+    - Use appropriate operations as needed
+    - Define the model at the origin (0,0,0)
+    - Include helpful comments in your code
+    - Do not include example usage or test code
+    - Do not include explanations outside of code comments
+  concise: |
+    Generate OpenSCAD for the following 3D object: {description}
+# --- New Prompts Section --- End ---
+
 openscad:
   executable_path: /Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD
   minimum_version: '2021.01'

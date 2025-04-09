@@ -59,6 +59,13 @@ def parse_arguments() -> argparse.Namespace:
         default=None, # Default is None, meaning run all models in config
         help="Optional list of specific LLM model names to run (must match keys in config). Runs all configured models if not specified.",
     )
+    parser.add_argument(
+        "--prompts",
+        nargs='+',
+        type=str,
+        default=None, # Default is None, meaning use 'default' prompt
+        help="Optional list of specific prompt keys to use (must match keys in config.prompts). Uses 'default' if not specified.",
+    )
     # --output-dir now refers to the PARENT directory for all runs
     parser.add_argument(
         "--output-dir",
@@ -123,6 +130,7 @@ def assemble_final_results(
             "task_id": task_id,
             "replicate_id": None,
             "model_name": model_config_used.get("name"),
+            "prompt_key_used": None,
             "task_description": None,
             "reference_stl_path": None,
             "prompt_used": gen_result.get("prompt_used"),
@@ -165,6 +173,7 @@ def assemble_final_results(
             final_entry["task_description"] = task_data.get("description")
             final_entry["reference_stl_path"] = task_data.get("reference_stl")
             final_entry["replicate_id"] = task_info.get("replicate_id")
+            final_entry["prompt_key_used"] = task_info.get("prompt_key")
 
         # --- Populate Paths (Relative to Project Root) ---
         if scad_path and os.path.isabs(scad_path):
@@ -367,6 +376,22 @@ def main():
         logger.info(f"Running all configured models: {', '.join([m.get('name','?') for m in models_to_run])}")
 
 
+    # --- Determine Prompts to Run ---
+    prompts_to_run = args.prompts
+    if prompts_to_run is None:
+        prompts_to_run = ['default']
+        logger.info("No prompts specified. Using default prompt.")
+    
+    # Validate that all requested prompts exist in config
+    for prompt_key in prompts_to_run:
+        prompt = config.get_prompt(prompt_key)
+        if prompt is None:
+            logger.error(f"Prompt key '{prompt_key}' not found in configuration. Available keys: {', '.join(config.get('prompts', {}).keys())}")
+            sys.exit(1)
+    
+    logger.info(f"Running prompts: {', '.join(prompts_to_run)}")
+
+
     # --- Get Replicates Setting ---
     try:
         num_replicates = int(config.get_required('evaluation.num_replicates'))
@@ -387,54 +412,63 @@ def main():
         task_id = task_data.get("task_id", "unknown_task")
         for model_config in models_to_run:
             model_identifier_for_filename = f"{model_config['provider']}_{model_config['name']}".replace("/", "_") # Sanitize for filename
-            logger.info(f"Starting Task: {task_id}, Model: {model_config['name']}")
+            for prompt_key in prompts_to_run:
+                logger.info(f"Starting Task: {task_id}, Model: {model_config['name']}, Prompt: {prompt_key}")
 
-            for replicate_id in range(1, num_replicates + 1):
-                logger.info(f"  Replicate {replicate_id}/{num_replicates}")
+                for replicate_id in range(1, num_replicates + 1):
+                    logger.info(f"  Replicate {replicate_id}/{num_replicates}")
 
-                # Generate unique filename including model and replicate ID
-                base_filename = f"{task_id}_{model_identifier_for_filename}_rep{replicate_id}"
-                scad_output_path = os.path.join(run_scad_dir, f"{base_filename}.scad")
+                    # Generate unique filename including model, prompt, and replicate ID
+                    base_filename = f"{task_id}_{model_identifier_for_filename}_{prompt_key}_rep{replicate_id}"
+                    scad_output_path = os.path.join(run_scad_dir, f"{base_filename}.scad")
 
-                try:
-                    # Call the correct function: generate_scad_for_task
-                    gen_result = generate_scad_for_task(
-                        task=task_data,
-                        model_config=model_config,
-                        output_dir=run_scad_dir, # Pass directory, function creates filename
-                        replicate_id=replicate_id # Pass replicate_id
-                        # config object is implicitly loaded by generate_scad_for_task
-                        # logger object is implicitly available via get_logger
-                    )
-                    generation_results.append(gen_result)
+                    try:
+                        # Call the correct function: generate_scad_for_task
+                        gen_result = generate_scad_for_task(
+                            task=task_data,
+                            model_config=model_config,
+                            output_dir=run_scad_dir, # Pass directory, function creates filename
+                            replicate_id=replicate_id, # Pass replicate_id
+                            prompt_key=prompt_key  # Pass the prompt key to use
+                            # config object is implicitly loaded by generate_scad_for_task
+                            # logger object is implicitly available via get_logger
+                        )
+                        generation_results.append(gen_result)
 
-                    # Use the path returned by the function for mapping and rendering list
-                    actual_scad_path = gen_result.get("output_path")
+                        # Use the path returned by the function for mapping and rendering list
+                        actual_scad_path = gen_result.get("output_path")
 
-                    if gen_result.get("success") and actual_scad_path and os.path.exists(actual_scad_path):
-                        logger.info(f"  SCAD generated successfully: {os.path.basename(actual_scad_path)}")
-                        scad_paths_to_render.append(actual_scad_path)
-                        # Map the actual SCAD path to task/model info
-                        scad_to_task_map[actual_scad_path] = {"task_id": task_id, "task_data": task_data, "model_config": model_config, "replicate_id": replicate_id}
-                    elif not gen_result.get("success"):
-                        logger.error(f"  SCAD generation failed for Replicate {replicate_id}: {gen_result.get('error')}")
-                    else: # Success=True but path issue
-                        logger.warning(f"  SCAD generation reported success but file path invalid/missing for Replicate {replicate_id}: {actual_scad_path}")
+                        if gen_result.get("success") and actual_scad_path and os.path.exists(actual_scad_path):
+                            logger.info(f"  SCAD generated successfully: {os.path.basename(actual_scad_path)}")
+                            scad_paths_to_render.append(actual_scad_path)
+                            # Map the actual SCAD path to task/model/prompt info
+                            scad_to_task_map[actual_scad_path] = {
+                                "task_id": task_id, 
+                                "task_data": task_data, 
+                                "model_config": model_config, 
+                                "replicate_id": replicate_id,
+                                "prompt_key": prompt_key  # Add prompt key to the map
+                            }
+                        elif not gen_result.get("success"):
+                            logger.error(f"  SCAD generation failed for Replicate {replicate_id}: {gen_result.get('error')}")
+                        else: # Success=True but path issue
+                            logger.warning(f"  SCAD generation reported success but file path invalid/missing for Replicate {replicate_id}: {actual_scad_path}")
 
-                except Exception as e:
-                    logger.error(f"  Unexpected error during SCAD generation orchestration for Replicate {replicate_id}: {e}", exc_info=True)
-                    # Record failure in results (use the intended path)
-                    generation_results.append({
-                        "task_id": task_id,
-                        "model": f"{model_config['provider']}/{model_config['name']}",
-                        "model_config_used": model_config,
-                        "replicate_id": replicate_id, # Add replicate ID to error result
-                        "output_path": scad_output_path, # Log the intended path
-                        "success": False,
-                        "error": f"Orchestration error: {e}",
-                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                        "prompt_used": None
-                    })
+                    except Exception as e:
+                        logger.error(f"  Unexpected error during SCAD generation orchestration for Replicate {replicate_id}: {e}", exc_info=True)
+                        # Record failure in results (use the intended path)
+                        generation_results.append({
+                            "task_id": task_id,
+                            "model": f"{model_config['provider']}/{model_config['name']}",
+                            "model_config_used": model_config,
+                            "replicate_id": replicate_id, # Add replicate ID to error result
+                            "output_path": scad_output_path, # Log the intended path
+                            "success": False,
+                            "error": f"Orchestration error: {e}",
+                            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                            "prompt_used": None,
+                            "prompt_key": prompt_key  # Add prompt key to error result
+                        })
 
     # --- Render SCAD Files ---
     render_results = []

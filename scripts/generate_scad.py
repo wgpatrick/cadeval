@@ -32,69 +32,12 @@ class ScadGenerationError(Exception):
     pass
 
 
-def format_prompt(description: str, parameters: Optional[Dict[str, Any]] = None) -> str:
-    """
-    Format a task description into a suitable prompt for LLM.
-    
-    Args:
-        description: The task description text
-        parameters: Optional parameters to customize the prompt
-    
-    Returns:
-        The formatted prompt string
-    """
-    # Default parameters (could be moved to config)
-    params = {
-        "include_header": True,
-        "reminder_single_part": True,
-        "specific_reminders": True,
-    }
-    
-    # Override defaults with any provided parameters
-    if parameters:
-        params.update(parameters)
-    
-    # Create prompt components
-    components = []
-    
-    # Header - main request
-    if params["include_header"]:
-        components.append(
-            "Create a valid OpenSCAD script that models the following 3D object, described below. "
-            "The code should define a complete 3D model that closely matches the description."
-        )
-    
-    # The actual description
-    components.append(description)
-    
-    # Add specific reminders if requested
-    if params["reminder_single_part"]:
-        components.append(
-            "IMPORTANT: Create only a SINGLE part/model in this script. "
-            "Do not include multiple unconnected components."
-        )
-    
-    if params["specific_reminders"]:
-        components.append(
-            "Reminders:\n"
-            "- Ensure the model is manifold and watertight\n"
-            "- Use appropriate operations as needed\n"
-            "- Define the model at the origin (0,0,0)\n"
-            "- Include helpful comments in your code\n"
-            "- Do not include example usage or test code\n"
-            "- Do not include explanations outside of code comments"
-        )
-    
-    # Join the components with double newlines for visual separation
-    return "\n\n".join(components)
-
-
 def generate_scad_for_task(
     task: Dict[str, Any], 
     model_config: Dict[str, Any],
     output_dir: str,
-    prompt_params: Optional[Dict[str, Any]] = None,
-    replicate_id: Optional[int] = None
+    replicate_id: Optional[int] = None,
+    prompt_key: str = 'default'
 ) -> Dict[str, Any]:
     """
     Generate OpenSCAD code for a specific task using a specific LLM.
@@ -103,8 +46,8 @@ def generate_scad_for_task(
         task: The task data dictionary
         model_config: The model configuration dictionary
         output_dir: Directory where SCAD files should be saved
-        prompt_params: Optional parameters to customize the prompt
         replicate_id: Optional identifier for the replicate run
+        prompt_key: Key to identify which prompt template to use from config (default: 'default')
     
     Returns:
         A dictionary with information about the generation process and results
@@ -127,24 +70,35 @@ def generate_scad_for_task(
         "model": f"{provider}/{model_name}", # Use original names for result ID
         "model_config_used": model_config,
         "replicate_id": replicate_id, # Add replicate_id to result
+        "prompt_key": prompt_key,  # Add prompt key to result
         "timestamp": datetime.now().isoformat(),
         "success": False,
         "output_path": None,
         "error": None,
-        "duration_seconds": None
+        "generation_time": None
     }
     
-    # Create output path including replicate_id if provided
-    base_filename = f"{task_id}_{model_identifier_for_filename}"
+    # Create output path including replicate_id and prompt_key
+    base_filename = f"{task_id}_{model_identifier_for_filename}_{prompt_key}"
     if replicate_id is not None:
         base_filename += f"_rep{replicate_id}"
     output_path = os.path.join(output_dir, f"{base_filename}.scad")
     result["output_path"] = output_path
+    result["output_scad_path"] = output_path  # For compatibility with existing code
     
-    # Format the prompt
+    # Get prompt template from config and format it with task description
     try:
-        prompt = format_prompt(description, prompt_params)
-        logger.info(f"Formatted prompt for task '{task_id}' using {provider}/{model_name}")
+        # Get the prompt template from config using prompt_key
+        prompt_template = config.get_prompt(prompt_key)
+        if not prompt_template:
+            error_msg = f"Prompt key '{prompt_key}' not found in configuration"
+            logger.error(error_msg)
+            result["error"] = error_msg
+            return result
+            
+        # Format the prompt template with the task description
+        prompt = prompt_template.format(description=description)
+        logger.info(f"Using prompt template '{prompt_key}' for task '{task_id}' using {provider}/{model_name}")
         logger.debug(f"Prompt: {prompt}")
         result["prompt_used"] = prompt
     except Exception as e:
@@ -199,14 +153,10 @@ def generate_scad_for_task(
         logger.error(error_msg)
         result["error"] = error_msg
         return result
-    except Exception as e:
-        error_msg = f"Unexpected error during SCAD generation: {str(e)}"
-        logger.error(error_msg)
-        result["error"] = error_msg
-        return result
-    finally:
-        # Record duration regardless of success/failure
-        result["duration_seconds"] = time.time() - start_time
+    
+    # Record the time taken
+    end_time = time.time()
+    result["generation_time"] = end_time - start_time
     
     return result
 
@@ -348,16 +298,17 @@ def generate_all_scad(
             
             # Generate SCAD code for this task and model
             try:
-                result = generate_scad_for_task(task, model_config, output_dir, prompt_params)
+                result = generate_scad_for_task(task, model_config, output_dir)
                 results.append(result)
                 
+                # Log success/failure
                 if result["success"]:
-                    logger.info(f"Successfully generated SCAD for task '{task_id}' using {provider}/{model_name}")
+                    logger.info(f"  Successfully generated: {os.path.basename(result['output_path'])}")
                 else:
-                    logger.warning(f"Failed to generate SCAD for task '{task_id}' using {provider}/{model_name}: {result['error']}")
+                    logger.error(f"  Failed to generate: {result['error']}")
                 
             except Exception as e:
-                logger.error(f"Unexpected error generating SCAD for task '{task_id}' using {provider}/{model_name}: {str(e)}")
+                logger.error(f"Unexpected error generating SCAD for {task_id} with {model_config.get('name')}: {e}")
                 results.append({
                     "task_id": task_id,
                     "model": f"{provider}/{model_name}",
@@ -411,7 +362,7 @@ if __name__ == "__main__":
             task_id = result["task_id"]
             model = result["model"]
             status = "SUCCESS" if result["success"] else "FAILED"
-            duration = f"{result['duration_seconds']:.2f}s" if result["duration_seconds"] else "N/A"
+            duration = f"{result['generation_time']:.2f}s" if result["generation_time"] else "N/A"
             
             print(f"\n[{i+1}] Task: {task_id} | Model: {model} | Status: {status} | Duration: {duration}")
             if result["output_path"] and result["success"]:

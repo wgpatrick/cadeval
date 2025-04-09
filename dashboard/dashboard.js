@@ -99,24 +99,67 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
     // Destroy existing charts if they exist
     Object.values(charts).forEach(chart => chart?.destroy());
 
+    // --- Data Preparation for Grouped Bars --- START ---
     const modelNames = Object.keys(metaStatistics);
+    // Assume all models have the same set of prompt keys for simplicity
+    // Get prompt keys from the first model
+    const promptKeys = Object.keys(metaStatistics[modelNames[0]] || {}); 
 
-    // Extract data for charts using NEW field names
-    const successRates = modelNames.map(m => metaStatistics[m].overall_pass_rate); // Use overall_pass_rate
-    const chamferPassRates = modelNames.map(m => metaStatistics[m].chamfer_pass_rate); // Use chamfer_pass_rate for checks passed chart for now
-    const avgChamfer = modelNames.map(m => metaStatistics[m].avg_chamfer); // Use avg_chamfer
-    const avgHausdorff95p = modelNames.map(m => metaStatistics[m].avg_hausdorff_95p); // Use avg_hausdorff_95p
-    // Skipping avgVolumeDiff chart for now as data isn't directly calculated
-    const volumePassRates = modelNames.map(m => metaStatistics[m].volume_pass_rate);
-    const hausdorffPassRates = modelNames.map(m => metaStatistics[m].hausdorff_pass_rate);
+    // Prepare datasets for each prompt key
+    const datasets = {};
+    promptKeys.forEach(promptKey => {
+        datasets[promptKey] = {
+            overallPassRate: [],
+            chamferPassRate: [],
+            avgChamfer: [],
+            avgHausdorff95p: [],
+            volumePassRate: [],
+            hausdorffPassRate: []
+            // Add other metrics if needed
+        };
+    });
+
+    // Populate data for each model and prompt
+    modelNames.forEach(modelName => {
+        promptKeys.forEach(promptKey => {
+            const stats = metaStatistics[modelName]?.[promptKey]; // Safe access
+            datasets[promptKey].overallPassRate.push(stats?.overall_pass_rate ?? NaN);
+            datasets[promptKey].chamferPassRate.push(stats?.chamfer_pass_rate ?? NaN);
+            datasets[promptKey].avgChamfer.push(stats?.avg_chamfer ?? NaN);
+            datasets[promptKey].avgHausdorff95p.push(stats?.avg_hausdorff_95p ?? NaN);
+            datasets[promptKey].volumePassRate.push(stats?.volume_pass_rate ?? NaN);
+            datasets[promptKey].hausdorffPassRate.push(stats?.hausdorff_pass_rate ?? NaN);
+        });
+    });
+    
+    // Assign distinct colors to prompts (customize as needed)
+    const promptColors = [
+        'rgba(54, 162, 235, 0.6)',  // Blue
+        'rgba(255, 99, 132, 0.6)',  // Red
+        'rgba(75, 192, 192, 0.6)',  // Teal
+        'rgba(255, 206, 86, 0.6)',  // Yellow
+        'rgba(153, 102, 255, 0.6)' // Purple
+    ];
+    const promptBorderColors = promptColors.map(color => color.replace(', 0.6', ', 1'));
+
+    // Create Chart.js datasets
+    const createChartDatasets = (metricKey, labelPrefix) => {
+        return promptKeys.map((promptKey, index) => ({
+            label: `${labelPrefix} (${promptKey})`,
+            data: datasets[promptKey][metricKey],
+            backgroundColor: promptColors[index % promptColors.length],
+            borderColor: promptBorderColors[index % promptColors.length],
+            borderWidth: 1
+        }));
+    };
+    // --- Data Preparation for Grouped Bars --- END ---
 
     const commonChartOptions = {
         scales: {
             y: { beginAtZero: true }
         },
-        maintainAspectRatio: false, // Allow chart to resize within wrapper
+        maintainAspectRatio: false,
         plugins: {
-             legend: { display: false }, // Hide legend if only one dataset
              tooltip: {
                  callbacks: {
                     label: function(context) {
@@ -154,72 +197,48 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
      // Removed percentDiffChartOptions as chart is skipped
 
 
-    // 1. Overall Success Rate Chart (Canvas ID: successRateChart)
+    // 1. Overall Success Rate Chart
     const successCtx = document.getElementById('successRateChart').getContext('2d');
     charts.successRate = new Chart(successCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
-            datasets: [{
-                label: 'Overall Pass Rate', // Updated Label
-                data: successRates.map(d => d === null ? NaN : d), // Handle potential nulls
-                backgroundColor: 'rgba(40, 167, 69, 0.6)', // Success green
-                borderColor: 'rgba(40, 167, 69, 1)',
-                borderWidth: 1
-            }]
+            datasets: createChartDatasets('overallPassRate', 'Overall Pass Rate')
         },
-        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Overall Pass Rate (%)' }}} // Updated Title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Overall Pass Rate (%) by Model & Prompt' }}}
     });
 
-    // 2. Chamfer Pass Rate Chart (Using checksPassedChart canvas ID for now)
+    // 2. Chamfer Pass Rate Chart
     const checksCtx = document.getElementById('checksPassedChart').getContext('2d');
     charts.checksPassed = new Chart(checksCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
-            datasets: [{
-                label: 'Chamfer Pass Rate', // Updated Label
-                 data: chamferPassRates.map(d => d === null ? NaN : d),
-                backgroundColor: 'rgba(255, 193, 7, 0.6)', // Warning yellow
-                borderColor: 'rgba(255, 193, 7, 1)',
-                borderWidth: 1
-            }]
+            datasets: createChartDatasets('chamferPassRate', 'Chamfer Pass Rate')
         },
-        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Chamfer Pass Rate (% Rel. to Checks Run)' }}} // Updated title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Chamfer Pass Rate (% Rel. to Checks Run)' }}}
     });
 
-    // 3. Average Chamfer Distance Chart (Canvas ID: avgSimilarityChart)
+    // 3. Average Chamfer Distance Chart
     const chamferCtx = document.getElementById('avgSimilarityChart').getContext('2d');
-     charts.similarity = new Chart(chamferCtx, {
+    charts.similarity = new Chart(chamferCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
-            datasets: [{
-                label: 'Avg Chamfer Distance (mm)', // Label ok
-                data: avgChamfer.map(d => d === null ? NaN : d),
-                 backgroundColor: 'rgba(153, 102, 255, 0.6)',
-                borderColor: 'rgba(153, 102, 255, 1)',
-                borderWidth: 1
-            }]
+            datasets: createChartDatasets('avgChamfer', 'Avg Chamfer (mm)')
         },
-         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Chamfer Distance (mm, Lower is Better)' }}} // Updated title
+        options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Chamfer Distance (mm, Lower is Better)' }}}
     });
 
-    // 4. Average Hausdorff 95p Distance Chart (Canvas ID: avgHausdorffChart)
+    // 4. Average Hausdorff 95p Distance Chart
     const hausdorffCtx = document.getElementById('avgHausdorffChart').getContext('2d');
     charts.avgHausdorff = new Chart(hausdorffCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
-            datasets: [{
-                label: 'Avg Hausdorff 95p Distance (mm)', // Updated Label (95p)
-                data: avgHausdorff95p.map(d => d === null ? NaN : d),
-                 backgroundColor: 'rgba(23, 162, 184, 0.6)',
-                borderColor: 'rgba(23, 162, 184, 1)',
-                borderWidth: 1
-            }]
+            datasets: createChartDatasets('avgHausdorff95p', 'Avg Haus. 95p (mm)')
         },
-         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Hausdorff 95p Distance (mm, Lower is Better)' }}} // Updated title
+        options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Hausdorff 95p Distance (mm, Lower is Better)' }}}
     });
 
     // 5. Skipping Volume Diff Chart (Canvas ID: avgVolumeDiffChart)
@@ -229,38 +248,26 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
          avgVolumeDiffCanvas.parentElement.style.display = 'none'; // Hide the wrapper div
     }
 
-    // 6. Volume Pass Rate Chart (Canvas ID: volumePassRateChart)
+    // 6. Volume Pass Rate Chart
     const volumePassCtx = document.getElementById('volumePassRateChart').getContext('2d');
     charts.volumePassRate = new Chart(volumePassCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
-            datasets: [{
-                label: 'Volume Pass Rate', // New Label
-                data: volumePassRates.map(d => d === null ? NaN : d),
-                backgroundColor: 'rgba(255, 99, 132, 0.6)', // Example color
-                borderColor: 'rgba(255, 99, 132, 1)',
-                borderWidth: 1
-            }]
+            datasets: createChartDatasets('volumePassRate', 'Volume Pass Rate')
         },
-        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Volume Pass Rate (% Rel. to Checks Run)' }}} // Add title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Volume Pass Rate (% Rel. to Checks Run)' }}}
     });
 
-    // 7. Hausdorff Pass Rate Chart (Canvas ID: hausdorffPassRateChart)
+    // 7. Hausdorff Pass Rate Chart
     const hausdorffPassCtx = document.getElementById('hausdorffPassRateChart').getContext('2d');
     charts.hausdorffPassRate = new Chart(hausdorffPassCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
-            datasets: [{
-                label: 'Hausdorff Pass Rate', // New Label
-                data: hausdorffPassRates.map(d => d === null ? NaN : d),
-                backgroundColor: 'rgba(54, 162, 235, 0.6)', // Example color
-                borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 1
-            }]
+            datasets: createChartDatasets('hausdorffPassRate', 'Hausdorff Pass Rate')
         },
-        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Hausdorff Pass Rate (% Rel. to Checks Run)' }}} // Add title
+        options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Hausdorff Pass Rate (% Rel. to Checks Run)' }}}
     });
 
     // --- Task Chart Logic (NEW) --- Start ---
@@ -326,7 +333,7 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
         modelCaption.textContent = 'Model Performance Summary';
 
         const modelHeader = modelTable.createTHead().insertRow();
-        const modelHeaders = ['Model', 'Overall Pass (%)', 'SCAD Gen (%)', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
+        const modelHeaders = ['Model', 'Prompt', 'Overall Pass (%)', 'SCAD Gen (%)', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
         modelHeaders.forEach(text => {
             const th = document.createElement('th');
             th.textContent = text;
@@ -334,18 +341,21 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
         });
 
         const modelBody = modelTable.createTBody();
-        for (const [modelName, stats] of Object.entries(metaStatistics)) {
-            const row = modelBody.insertRow();
-            row.insertCell().textContent = modelName;
-            row.insertCell().textContent = fmtTable(stats.overall_pass_rate, '%');
-            row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%');
-            row.insertCell().textContent = fmtTable(stats.render_success_rate, '%');
-            row.insertCell().textContent = stats.checks_run_count ?? 'N/A'; // Direct count
-            row.insertCell().textContent = fmtTable(stats.chamfer_pass_rate, '%');
-            row.insertCell().textContent = fmtTable(stats.hausdorff_pass_rate, '%');
-            row.insertCell().textContent = fmtTable(stats.volume_pass_rate, '%');
-            row.insertCell().textContent = fmtTable(stats.avg_chamfer, ' mm', 2);
-            row.insertCell().textContent = fmtTable(stats.avg_hausdorff_95p, ' mm', 2);
+        for (const [modelName, promptData] of Object.entries(metaStatistics)) {
+            for (const [promptKey, stats] of Object.entries(promptData)) {
+                const row = modelBody.insertRow();
+                row.insertCell().textContent = modelName;
+                row.insertCell().textContent = promptKey;
+                row.insertCell().textContent = fmtTable(stats.overall_pass_rate, '%');
+                row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%');
+                row.insertCell().textContent = fmtTable(stats.render_success_rate, '%');
+                row.insertCell().textContent = stats.checks_run_count ?? 'N/A';
+                row.insertCell().textContent = fmtTable(stats.chamfer_pass_rate, '%');
+                row.insertCell().textContent = fmtTable(stats.hausdorff_pass_rate, '%');
+                row.insertCell().textContent = fmtTable(stats.volume_pass_rate, '%');
+                row.insertCell().textContent = fmtTable(stats.avg_chamfer, ' mm', 2);
+                row.insertCell().textContent = fmtTable(stats.avg_hausdorff_95p, ' mm', 2);
+            }
         }
         container.appendChild(modelTable);
     } else {
@@ -415,34 +425,29 @@ function createModelHtmlTable(modelName, modelResults, container) {
     // Define Columns (aligned with NEW keys from process_results.py)
     const columns = [
         { key: 'task_id', header: 'Task ID' },
-        { key: 'replicate_id', header: 'Rep ID' }, // NEW Replicate ID column
-        { key: 'scad_generation_success', header: 'SCAD Gen', format: formatPassFailText, isBoolean: true }, // Use new key
-        { key: 'check_render_successful', header: 'Render OK', format: formatPassFailText, isBoolean: true }, // Use refined key
-        { key: 'checks_run_attempted', header: 'Checks Run', format: formatPassFailText, isBoolean: true }, // Use new key
+        { key: 'replicate_id', header: 'Rep ID' },
+        { key: 'prompt_key', header: 'Prompt' },
+        { key: 'scad_generation_success', header: 'SCAD Gen', format: formatPassFailText, isBoolean: true },
+        { key: 'check_render_successful', header: 'Render OK', format: formatPassFailText, isBoolean: true },
+        { key: 'checks_run_attempted', header: 'Checks Run', format: formatPassFailText, isBoolean: true },
         { key: 'check_is_watertight', header: 'Watertight', format: formatPassFailText, isBoolean: true },
         { key: 'check_is_single_component', header: 'Single Comp', format: formatPassFailText, isBoolean: true },
-        { key: 'check_bounding_box_accurate', header: 'BBox Acc.', format: formatPassFailText, isBoolean: true, tooltip: "Checks if aligned BBox dims are within tolerance" }, // Use refined key
-        { key: 'check_volume_passed', header: 'Volume Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if volume difference % is within threshold" }, // Use refined key
-        { key: 'check_hausdorff_passed', header: 'Hausdorff Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Hausdorff 95p distance is within threshold" }, // Use refined key
-        { key: 'chamfer_check_passed', header: 'Chamfer Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Chamfer distance is within threshold" }, // Use new key
-
-        { key: 'chamfer_dist', header: 'Chamfer (mm)' }, // Already formatted string
+        { key: 'check_bounding_box_accurate', header: 'BBox Acc.', format: formatPassFailText, isBoolean: true, tooltip: "Checks if aligned BBox dims are within tolerance" },
+        { key: 'check_volume_passed', header: 'Volume Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if volume difference % is within threshold" },
+        { key: 'check_hausdorff_passed', header: 'Hausdorff Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Hausdorff 95p distance is within threshold" },
+        { key: 'chamfer_check_passed', header: 'Chamfer Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Chamfer distance is within threshold" },
+        { key: 'chamfer_dist', header: 'Chamfer (mm)' },
         {
             key: 'haus_95p_dist',
             header: 'Hausdorff Dist (95p / 99p mm)',
             hozAlign: "center",
             headerHozAlign: "center",
-            // Custom handling moved inside the loop
         },
-        { key: 'ref_vol', header: 'Vol Ref (mm³)' }, // Already formatted string
-        { key: 'gen_vol', header: 'Vol Gen (mm³)' }, // Already formatted string
-        { key: 'ref_bbox', header: 'BBox Ref (mm)' }, // Display raw array or N/A
-        { key: 'gen_bbox', header: 'BBox Gen Aligned (mm)' }, // Display raw array or N/A
+        { key: 'ref_vol', header: 'Vol Ref (mm³)' },
+        { key: 'gen_vol', header: 'Vol Gen (mm³)' },
+        { key: 'ref_bbox', header: 'BBox Ref (mm)' },
+        { key: 'gen_bbox', header: 'BBox Gen Aligned (mm)' },
         { key: 'visualize_cmd', header: 'Visualize Cmd' },
-        // Error columns (optional)
-        // { key: 'gen_err', header: 'Gen Error' },
-        // { key: 'render_err', header: 'Render Error' },
-        // { key: 'check_err', header: 'Check Error' },
     ];
 
     // Create header row
@@ -462,8 +467,9 @@ function createModelHtmlTable(modelName, modelResults, container) {
         // Use the pre-calculated overall_passed flag from the data
         const isRowFullySuccessful = result.overall_passed === true; 
 
-        let taskIdCell = null; // To store the Task ID cell for later styling
-        let repIdCell = null; // To store the Rep ID cell
+        let taskIdCell = null;
+        let repIdCell = null;
+        let promptCell = null;
 
         columns.forEach(col => {
             const cell = row.insertCell();
@@ -540,6 +546,7 @@ function createModelHtmlTable(modelName, modelResults, container) {
             // Store specific cells for later row-level styling
             if (col.key === 'task_id') taskIdCell = cell;
             if (col.key === 'replicate_id') repIdCell = cell;
+            if (col.key === 'prompt_key') promptCell = cell;
         });
 
         // Style Task ID cell based on overall success

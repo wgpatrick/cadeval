@@ -1,0 +1,148 @@
+import pytest
+import yaml
+import os
+from unittest.mock import patch, mock_open
+
+# Assume config_loader is importable relative to the tests directory
+# or the project root is added to PYTHONPATH when running pytest
+from scripts.config_loader import Config, ConfigError
+
+# --- Test Fixtures ---
+
+@pytest.fixture
+def valid_config_dict():
+    """Provides a dictionary representing a valid config with prompts."""
+    return {
+        'prompts': {
+            'default': "Default prompt: {description}",
+            'concise': "Concise prompt: {description}"
+        },
+        'openscad': {
+            'executable_path': '/path/to/openscad',
+            'minimum_version': '2021.01',
+            'render_timeout_seconds': 120
+        },
+        'directories': {
+            'output': './results'
+        },
+        'llm': {
+            'models': [{'name': 'test-model', 'provider': 'test'}]
+        },
+        'geometry_check': {
+            'bounding_box_tolerance_mm': 1.0
+        },
+        'evaluation': { # Added evaluation section for completeness based on previous config edits
+            'num_replicates': 2,
+            'tasks_per_model': [],
+            'models_per_task': []
+        }
+    }
+
+@pytest.fixture
+def config_missing_default_prompt_dict(valid_config_dict):
+    """Config dict missing the default prompt key."""
+    config = valid_config_dict.copy()
+    config['prompts'] = valid_config_dict['prompts'].copy() # Ensure deep copy for nested dict
+    del config['prompts']['default']
+    return config
+
+@pytest.fixture
+def config_prompts_not_dict_dict(valid_config_dict):
+    """Config dict where prompts section is not a dictionary."""
+    config = valid_config_dict.copy()
+    config['prompts'] = ["list", "not", "dict"]
+    return config
+
+@pytest.fixture
+def config_missing_prompts_section_dict(valid_config_dict):
+    """Config dict missing the entire prompts section."""
+    config = valid_config_dict.copy()
+    del config['prompts']
+    return config
+
+@pytest.fixture
+def mock_config_file(tmp_path):
+    """Factory fixture to create a temporary config file with given content."""
+    def _create_file(config_content_dict):
+        config_path = tmp_path / "test_config.yaml"
+        with open(config_path, 'w') as f:
+            yaml.dump(config_content_dict, f)
+        return str(config_path)
+    return _create_file
+
+# --- Test Cases ---
+
+def test_config_load_success_with_prompts(mock_config_file, valid_config_dict):
+    """Test Case 1: Successfully loads config with a valid prompts section."""
+    config_path = mock_config_file(valid_config_dict)
+    try:
+        # For this basic test, we just ensure it loads without error and the prompts section is a dict
+        config = Config(config_path)
+        assert isinstance(config.config_data.get('prompts'), dict)
+        # The validation logic itself will be tested separately
+    except Exception as e:
+         pytest.fail(f"An unexpected error occurred during config loading: {e}")
+
+
+# These tests target the validation logic which needs to be implemented.
+# Uncomment `@pytest.mark.xfail` if running tests before implementation.
+
+# @pytest.mark.xfail(reason="Validation logic for prompts not yet implemented")
+def test_validate_prompts_success(mock_config_file, valid_config_dict):
+    """Test Case 2: Validation passes with a correct prompts section."""
+    config_path = mock_config_file(valid_config_dict)
+    try:
+        Config(config_path) # Instantiation should trigger validation implicitly
+    except ConfigError as e:
+        pytest.fail(f"Validation failed unexpectedly: {e}")
+    except Exception as e:
+         pytest.fail(f"An unexpected error occurred during validation: {e}")
+
+# @pytest.mark.xfail(reason="Validation logic for prompts not yet implemented")
+def test_validate_prompts_missing_default_raises(mock_config_file, config_missing_default_prompt_dict):
+    """Test Case 3: Validation fails if default prompt key is missing."""
+    config_path = mock_config_file(config_missing_default_prompt_dict)
+    with pytest.raises(ConfigError, match=r"Missing required key 'default' in 'prompts' section"):
+        Config(config_path) # Validation needs to be implemented
+
+# @pytest.mark.xfail(reason="Validation logic for prompts not yet implemented")
+def test_validate_prompts_not_dict_raises(mock_config_file, config_prompts_not_dict_dict):
+    """Test Case 4: Validation fails if prompts section is not a dict."""
+    config_path = mock_config_file(config_prompts_not_dict_dict)
+    with pytest.raises(ConfigError, match=r"Configuration section 'prompts' must be a dictionary"):
+        Config(config_path) # Validation needs to be implemented
+
+# @pytest.mark.xfail(reason="Validation logic for missing prompts section not yet implemented")
+def test_validate_prompts_section_missing_raises(mock_config_file, config_missing_prompts_section_dict):
+    """Test Case 8: Validation should fail if the 'prompts' section is required and missing."""
+    config_path = mock_config_file(config_missing_prompts_section_dict)
+    # Assuming 'prompts' section becomes mandatory due to 'default' being required
+    with pytest.raises(ConfigError, match=r"Missing required configuration section: 'prompts'"):
+        Config(config_path) # Validation needs to be implemented
+
+
+# These tests target the get_prompt method which needs to be implemented.
+# Uncomment `@pytest.mark.xfail` if running tests before implementation.
+
+# @pytest.mark.xfail(reason="get_prompt method not yet implemented")
+@pytest.mark.parametrize(
+    "config_dict_fixture_name, key_to_get, expected_value",
+    [
+        ("valid_config_dict", "default", "Default prompt: {description}"),
+        ("valid_config_dict", "concise", "Concise prompt: {description}"),
+        ("valid_config_dict", "non_existent", None), # Test Case 6: Non-existent key
+        ("config_missing_prompts_section_dict", "default", None), # Test Case 7: Section missing
+    ],
+    indirect=["config_dict_fixture_name"] # Tells pytest these fixture names need lookup
+)
+def test_get_prompt(request, mock_config_file, config_dict_fixture_name, key_to_get, expected_value):
+    """Test Cases 5, 6, 7: Test get_prompt method behavior."""
+    config_dict = request.getfixturevalue(config_dict_fixture_name)
+    config_path = mock_config_file(config_dict)
+    config = Config(config_path)
+
+    # Check if get_prompt method exists before calling
+    if not hasattr(config, 'get_prompt'):
+         pytest.fail("Config object does not have the 'get_prompt' method.")
+
+    assert config.get_prompt(key_to_get) == expected_value

@@ -269,6 +269,7 @@ def process_data_for_dashboard(results: List[Dict[str, Any]], config: Config) ->
         dashboard_data.append({
             "task_id": entry.get("task_id", "N/A"),
             "model_name": entry.get("model_name", "N/A"),
+            "prompt_key": entry.get("prompt_key_used", "default"),
             "replicate_id": entry.get("replicate_id", "N/A"),
             # --- Raw Replicate Data ---
             "render_status": render_status,
@@ -397,9 +398,10 @@ def aggregate_replicate_results(results: List[Dict[str, Any]]) -> List[Dict[str,
 
 # --- New Summary Statistics Calculation Function --- Start ---
 def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
-    """Calculates model-level and task-level summary statistics from processed replicate data."""
-    logger.info("Calculating summary statistics for models and tasks...")
-    model_stats = defaultdict(lambda: {
+    """Calculates model-level (per prompt) and task-level summary statistics."""
+    logger.info("Calculating summary statistics for models (per prompt) and tasks...")
+    # Model stats need to be nested by model_name first, then prompt_key
+    model_stats = defaultdict(lambda: defaultdict(lambda: {
         "total_replicates": 0,
         "scad_generation_success_count": 0,
         "render_success_count": 0,
@@ -412,7 +414,7 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
         "hausdorff_pass_count": 0,
         "chamfer_pass_count": 0,
         "metrics": defaultdict(list) # Store valid numeric metrics
-    })
+    }))
     task_stats = defaultdict(lambda: {
         "total_replicates": 0,
         "scad_generation_success_count": 0,
@@ -434,14 +436,15 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
     for entry in processed_data:
         model_name = entry.get("model_name")
         task_id = entry.get("task_id")
+        prompt_key = entry.get("prompt_key", "default") # Get the prompt key used
 
         if not model_name or not task_id:
             logger.warning(f"Skipping entry with missing model_name or task_id: {entry}")
             continue
 
-        # Get stats dicts for current model and task
-        m_stat = model_stats[model_name]
-        t_stat = task_stats[task_id]
+        # Get stats dict for the specific model AND prompt
+        m_stat = model_stats[model_name][prompt_key]
+        t_stat = task_stats[task_id] # Task stats don't need prompt key nesting
 
         # Increment total counts
         m_stat["total_replicates"] += 1
@@ -493,53 +496,90 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
                     except (ValueError, TypeError):
                         logger.debug(f"Could not convert metric '{metric_key}' value '{val_str}' to float for stats.")
 
-    # --- Calculate Rates and Statistics ---
-    def calculate_final_stats(stat_dict):
-        final_stats = {}
-        for key, stats in stat_dict.items():
-            total_reps = stats["total_replicates"]
-            checks_run = stats["checks_run_count"]
-            final = stats.copy() # Start with the counts
-
-            # Calculate rates
-            final["scad_generation_success_rate"] = (stats["scad_generation_success_count"] / total_reps * 100) if total_reps > 0 else 0
-            final["render_success_rate"] = (stats["render_success_count"] / total_reps * 100) if total_reps > 0 else 0
-            final["overall_pass_rate"] = (stats["overall_pass_count"] / total_reps * 100) if total_reps > 0 else 0
-
-            # Calculate check rates relative to checks run
-            final["watertight_pass_rate"] = (stats["watertight_pass_count"] / checks_run * 100) if checks_run > 0 else 0
-            final["single_comp_pass_rate"] = (stats["single_comp_pass_count"] / checks_run * 100) if checks_run > 0 else 0
-            final["bbox_acc_pass_rate"] = (stats["bbox_acc_pass_count"] / checks_run * 100) if checks_run > 0 else 0
-            final["volume_pass_rate"] = (stats["volume_pass_count"] / checks_run * 100) if checks_run > 0 else 0
-            final["hausdorff_pass_rate"] = (stats["hausdorff_pass_count"] / checks_run * 100) if checks_run > 0 else 0
-            final["chamfer_pass_rate"] = (stats["chamfer_pass_count"] / checks_run * 100) if checks_run > 0 else 0
-
-            # Calculate metric statistics
-            for metric, values in stats["metrics"].items():
-                metric_name = metric.replace('_dist', '').replace('haus_','hausdorff_') # Clean up name slightly
-                if values:
-                    try: final[f"avg_{metric_name}"] = statistics.mean(values)
-                    except statistics.StatisticsError: final[f"avg_{metric_name}"] = None
-                    try: final[f"median_{metric_name}"] = statistics.median(values)
-                    except statistics.StatisticsError: final[f"median_{metric_name}"] = None
-                    if len(values) > 1:
-                        try: final[f"stdev_{metric_name}"] = statistics.stdev(values)
-                        except statistics.StatisticsError: final[f"stdev_{metric_name}"] = None
+    # --- Calculate Rates and Statistics --- Need to handle nested model_stats
+    def calculate_final_stats(stat_dict, is_nested=False):
+        final_stats_result = {}
+        for primary_key, primary_value in stat_dict.items():
+            if is_nested:
+                # Process nested dictionary (model -> prompt -> stats)
+                nested_final_stats = {}
+                for prompt_key, stats in primary_value.items():
+                    # Process the individual stat dict (same logic as before)
+                    total_reps = stats["total_replicates"]
+                    checks_run = stats["checks_run_count"]
+                    final = stats.copy()
+                    # Calculate rates
+                    final["scad_generation_success_rate"] = (stats["scad_generation_success_count"] / total_reps * 100) if total_reps > 0 else 0
+                    final["render_success_rate"] = (stats["render_success_count"] / total_reps * 100) if total_reps > 0 else 0
+                    final["overall_pass_rate"] = (stats["overall_pass_count"] / total_reps * 100) if total_reps > 0 else 0
+                    final["watertight_pass_rate"] = (stats["watertight_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                    final["single_comp_pass_rate"] = (stats["single_comp_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                    final["bbox_acc_pass_rate"] = (stats["bbox_acc_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                    final["volume_pass_rate"] = (stats["volume_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                    final["hausdorff_pass_rate"] = (stats["hausdorff_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                    final["chamfer_pass_rate"] = (stats["chamfer_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                    # Calculate metric statistics
+                    for metric, values in stats["metrics"].items():
+                        metric_name = metric.replace('_dist', '').replace('haus_','hausdorff_')
+                        if values:
+                            try: final[f"avg_{metric_name}"] = statistics.mean(values)
+                            except statistics.StatisticsError: final[f"avg_{metric_name}"] = None
+                            try: final[f"median_{metric_name}"] = statistics.median(values)
+                            except statistics.StatisticsError: final[f"median_{metric_name}"] = None
+                            if len(values) > 1:
+                                try: final[f"stdev_{metric_name}"] = statistics.stdev(values)
+                                except statistics.StatisticsError: final[f"stdev_{metric_name}"] = None
+                            else:
+                                final[f"stdev_{metric_name}"] = 0.0
+                        else:
+                             final[f"avg_{metric_name}"] = None
+                             final[f"median_{metric_name}"] = None
+                             final[f"stdev_{metric_name}"] = None
+                    del final["metrics"]
+                    nested_final_stats[prompt_key] = final
+                final_stats_result[primary_key] = nested_final_stats
+            else:
+                # Process flat dictionary (task -> stats)
+                stats = primary_value
+                total_reps = stats["total_replicates"]
+                checks_run = stats["checks_run_count"]
+                final = stats.copy()
+                # Calculate rates
+                final["scad_generation_success_rate"] = (stats["scad_generation_success_count"] / total_reps * 100) if total_reps > 0 else 0
+                final["render_success_rate"] = (stats["render_success_count"] / total_reps * 100) if total_reps > 0 else 0
+                final["overall_pass_rate"] = (stats["overall_pass_count"] / total_reps * 100) if total_reps > 0 else 0
+                final["watertight_pass_rate"] = (stats["watertight_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                final["single_comp_pass_rate"] = (stats["single_comp_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                final["bbox_acc_pass_rate"] = (stats["bbox_acc_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                final["volume_pass_rate"] = (stats["volume_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                final["hausdorff_pass_rate"] = (stats["hausdorff_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                final["chamfer_pass_rate"] = (stats["chamfer_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+                # Calculate metric statistics
+                for metric, values in stats["metrics"].items():
+                    metric_name = metric.replace('_dist', '').replace('haus_','hausdorff_')
+                    if values:
+                        try: final[f"avg_{metric_name}"] = statistics.mean(values)
+                        except statistics.StatisticsError: final[f"avg_{metric_name}"] = None
+                        try: final[f"median_{metric_name}"] = statistics.median(values)
+                        except statistics.StatisticsError: final[f"median_{metric_name}"] = None
+                        if len(values) > 1:
+                            try: final[f"stdev_{metric_name}"] = statistics.stdev(values)
+                            except statistics.StatisticsError: final[f"stdev_{metric_name}"] = None
+                        else:
+                            final[f"stdev_{metric_name}"] = 0.0
                     else:
-                        final[f"stdev_{metric_name}"] = 0.0 # Stdev of 1 point is 0
-                else:
-                     final[f"avg_{metric_name}"] = None
-                     final[f"median_{metric_name}"] = None
-                     final[f"stdev_{metric_name}"] = None
-            del final["metrics"] # Remove raw metrics lists
+                         final[f"avg_{metric_name}"] = None
+                         final[f"median_{metric_name}"] = None
+                         final[f"stdev_{metric_name}"] = None
+                del final["metrics"]
+                final_stats_result[primary_key] = final
+        return final_stats_result
 
-            final_stats[key] = final
-        return final_stats
+    # Pass is_nested=True for model stats
+    final_model_stats = calculate_final_stats(model_stats, is_nested=True)
+    final_task_stats = calculate_final_stats(task_stats, is_nested=False)
 
-    final_model_stats = calculate_final_stats(model_stats)
-    final_task_stats = calculate_final_stats(task_stats)
-
-    logger.info(f"Finished calculating summary statistics for {len(final_model_stats)} models and {len(final_task_stats)} tasks.")
+    logger.info(f"Finished calculating summary statistics for {len(final_model_stats)} models (across prompts) and {len(final_task_stats)} tasks.")
     return final_model_stats, final_task_stats
 # --- New Summary Statistics Calculation Function --- End ---
 

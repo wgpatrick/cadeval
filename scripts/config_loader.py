@@ -11,6 +11,7 @@ import sys
 import yaml
 from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
+import logging
 
 # Add parent directory to path for imports if needed
 parent_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
@@ -19,8 +20,9 @@ if parent_dir not in sys.path:
 
 from scripts.logger_setup import get_logger, setup_logger
 
-# Initialize logger for this module
-logger = get_logger(__name__)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -72,6 +74,9 @@ class Config:
         try:
             with open(self.config_path, 'r') as config_file:
                 self.config_data = yaml.safe_load(config_file)
+            if not isinstance(self.config_data, dict):
+                logger.error(f"Configuration file {self.config_path} does not contain a valid YAML dictionary.")
+                raise ConfigError(f"Configuration file {self.config_path} is invalid: Root element must be a dictionary.")
         except FileNotFoundError:
             error_msg = f"Configuration file not found: {self.config_path}"
             logger.error(error_msg)
@@ -88,16 +93,19 @@ class Config:
         Raises:
             ConfigError: If any required section is missing.
         """
-        # Define required sections
-        required_sections = ['openscad', 'directories', 'llm', 'geometry_check']
-        
-        # Check if each required section exists
+        if not isinstance(self.config_data, dict):
+            # This check might be redundant if _load_config already raises, but good for safety
+            raise ConfigError("Configuration data is not a dictionary.")
+
+        required_sections = ['openscad', 'directories', 'llm', 'geometry_check', 'evaluation', 'prompts']
         for section in required_sections:
             if section not in self.config_data:
-                error_msg = f"Missing required configuration section: {section}"
-                logger.error(error_msg)
-                raise ConfigError(error_msg)
-        
+                raise ConfigError(f"Missing required configuration section: '{section}'")
+            if not isinstance(self.config_data[section], dict):
+                # Allow prompts to be validated more specifically below
+                if section != 'prompts':
+                    raise ConfigError(f"Configuration section '{section}' must be a dictionary.")
+
         # Validate specific required keys within sections
         openscad_required = ['executable_path', 'minimum_version', 'render_timeout_seconds']
         for key in openscad_required:
@@ -124,6 +132,19 @@ class Config:
             logger.error(error_msg)
             raise ConfigError(error_msg)
         
+        # Validate 'prompts' section
+        prompts_section = self.config_data.get('prompts')
+        if not isinstance(prompts_section, dict):
+            raise ConfigError("Configuration section 'prompts' must be a dictionary.")
+        if 'default' not in prompts_section:
+            raise ConfigError("Missing required key 'default' in 'prompts' section.")
+        # Optional: Validate that prompts are strings?
+        for key, value in prompts_section.items():
+            if not isinstance(value, str):
+                logger.warning(f"Value for prompt key '{key}' in 'prompts' section is not a string. Found type: {type(value)}")
+                # Decide if this should be a warning or a ConfigError based on requirements
+                # raise ConfigError(f"Prompt value for key '{key}' must be a string.")
+
         logger.debug("Configuration validation successful")
     
     def get(self, key_path: str, default: Any = None) -> Any:
@@ -240,6 +261,35 @@ class Config:
             raise ConfigError(error_msg)
         
         return api_key
+
+    def get_prompt(self, key: str) -> str:
+        """
+        Retrieves a prompt string from the 'prompts' section by its key.
+
+        Args:
+            key (str): The key of the prompt to retrieve (e.g., 'default', 'concise').
+
+        Returns:
+            str or None: The prompt string if the key exists and the value is a string,
+                         otherwise None. Returns None if the 'prompts' section doesn't exist.
+        """
+        prompts_section = self.config_data.get('prompts')
+        if isinstance(prompts_section, dict):
+            prompt_value = prompts_section.get(key)
+            # Ensure the retrieved value is actually a string before returning
+            if isinstance(prompt_value, str):
+                return prompt_value
+            elif prompt_value is not None:
+                logger.warning(f"Prompt key '{key}' found but value is not a string (type: {type(prompt_value)}). Returning None.")
+                return None
+            else:
+                # Key not found within the prompts dict
+                logger.debug(f"Prompt key '{key}' not found in 'prompts' section.")
+                return None
+        else:
+            # Prompts section doesn't exist or is not a dict
+            logger.warning(f"Attempted to get prompt key '{key}' but 'prompts' section is missing or not a dictionary.")
+            return None
 
 
 def get_config(config_path: str = "config.yaml") -> Config:
