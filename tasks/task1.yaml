@@ -1,5 +1,9 @@
 task_id: "task1" # Based on the filename, adjust if needed
-description: "A simple hex nut without the threads modeled. The nut has a hexagonal shape with a hole in the center of the hexagonal shape. The hexagon is 10mm wide (flat size to flat side). The hole diameter through the center of the hexagon is 5mm. The thickness of the nut is 5mm."
+description: "A simple hex nut without the threads modeled. The nut has a hexagonal shape with a hole in the center of the hexagonal shape. 
+
+1. The extruded hexagonal prism is 10mm wide (flat side to flat side). 
+
+2. The hole diameter through the center of the hexagon is 5mm. The thickness of the nut is 5mm.
 reference_stl: "./reference/task1.stl" # Assumes this STL file will be placed here
 requirements:
   bounding_box: [11.4107, 10.7664, 5.0] # Updated dimensions

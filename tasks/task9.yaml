@@ -1,5 +1,9 @@
 task_id: "task9" # e.g., widget_01, bracket_complex_v2
-description: "This is a 50mm x 50mm x 50mm box with 5mm thick walls (and no top). You can create this box by creating a cube and then cutting down from the top a 40mm x 40mm square. "
+description: "This is a 50mm x 50mm x 50mm box with 5mm thick walls (and no top). 
+
+1. Start by creating a cube (50x50x50)
+
+2. Then cut down from the top a 40mm x 40mm square a total depth of 45mm."
 reference_stl: "./reference/task9.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [50,50,50] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.

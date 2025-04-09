@@ -1,13 +1,13 @@
 task_id: "task19" # e.g., widget_01, bracket_complex_v2
 description: "This is a 10mm thick circular plate that has two holes and a crank shaft. 
 
-The plate is a concentric circle (sort of like a gasket). The outer diameter of the plate is 100mm and the inner diameter is 50mm. 
+1. The plate is a concentric circle (sort of like a gasket). The outer diameter of the plate is 100mm and the inner diameter is 50mm. 
 
-There are two holes through the plate. One hole is at the 12 o'clock position (at the top of the plate). It's halfway between the inner diameter and outer diameter (so the center hole is 37.5mm from the center of the circular plate. The hole is 5mm diameter. 
+2. There are two holes through the plate. One hole is at the 12 o'clock position (at the top of the plate). It's halfway between the inner diameter and outer diameter (so the center hole is 37.5mm from the center of the circular plate. The hole is 5mm diameter. 
 
-The second hole is in the 3 o'clock position. It's also half way between the inner and outer diameter of the plate. This hole is 10mm in diameter.
+3. The second hole is in the 3 o'clock position. It's also half way between the inner and outer diameter of the plate. This hole is 10mm in diameter.
 
-The crank shaft is a the 6 o’clock position. It’s a square prism, 10mm on each side, extruded 40mm out from the plate. The center of the prism is 10mm from outer diameter."
+4. The crank shaft is a the 6 o’clock position. It’s a square prism, 10mm on each side, extruded 40mm out from the plate. The center of the prism is 10mm from outer diameter."
 reference_stl: "./reference/task19.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [100,100,50] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.

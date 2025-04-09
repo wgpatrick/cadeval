@@ -1,11 +1,11 @@
 task_id: "task17" # e.g., widget_01, bracket_complex_v2
 description: "This is a rectangular plate with a slot cut through it with a slot counterbore. I’ll explain step by step. 
 
-First, create a rectangular plate: 80mm (X) x 40mm (Y) x 10mm (Z)
+1. First, create a rectangular plate: 80mm (X) x 40mm (Y) x 10mm (Z)
 
-Next, make a slot cut. The slot is 20mm center to center and is parallel to the X axis (along the length of the plate) and centered in the Y dimension. One of the two circles is at the center of the plate. The cut should go through the whole thickness of the plate (10mm). The diameter of the slot is 10mm. 
+2. Next, make a slot cut. The slot is 20mm center to center and is parallel to the X axis (along the length of the plate) and centered in the Y dimension. One of the two circles is at the center of the plate. The cut should go through the whole thickness of the plate (10mm). The diameter of the slot is 10mm. 
 
-Next, we’re going to make another slot cut that counterbores the first slot. The diameter of the counterbore slot is 15mm and the depth of the cut is 5mm. "
+3. Next, we’re going to make another slot cut that counterbores the first slot. The diameter of the counterbore slot is 15mm and the depth of the cut is 5mm."
 reference_stl: "./reference/task17.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [80,40,10] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.

@@ -1,13 +1,13 @@
 task_id: "task16" # e.g., widget_01, bracket_complex_v2
 description: "This is a clamp used for workholding. It’s made with 4 operations that I’ll explain sequentially. 
 
-To start, extrude a rectangular prism that is 80 mm (X) by 40mm (Y) and 20 mm (Z) thickness. 
+1. To start, extrude a rectangular prism that is 80 mm (X) by 40mm (Y) and 20 mm (Z) thickness. 
 
-Next, we’re going to cut in the Z dimension to cut off two corners on one side of the prism. On the XY plane, draw a line in each corner to to make a triangle. Both right triangles should have two legs of 15mm. Using those two triangle profiles, cut down into the prism, removing the corners. 
+2. Next, we’re going to cut in the Z dimension to cut off two corners on one side of the prism. On the XY plane, draw a line in each corner to to make a triangle. Both right triangles should have two legs of 15mm. Using those two triangle profiles, cut down into the prism, removing the corners. 
 
-Next, we’re going to make a slot cut in the Z dimension down through the prism. The slot is 25mm long (center point to center point). The diameter of the two circles in the slot is 10mm. The slot is positioned parallel to the sides (the 80mm dimension) of the prism. The centerline of the slot (which bisects the two circles) is centered in the prism in the Y axis. Finally, we need to position the slot in the X axis on the prism; the slot is 15mm from the end of the prism that has the cut off corners, measured from the end of the prism to the edge of the circle of the slot. 
+3. Next, we’re going to make a slot cut in the Z dimension down through the prism. The slot is 25mm long (center point to center point). The diameter of the two circles in the slot is 10mm. The slot is positioned parallel to the sides (the 80mm dimension) of the prism. The centerline of the slot (which bisects the two circles) is centered in the prism in the Y axis. Finally, we need to position the slot in the X axis on the prism; the slot is 15mm from the end of the prism that has the cut off corners, measured from the end of the prism to the edge of the circle of the slot. 
 
-Finally, the slot edges (on both the front and back of the prism) are chamfered with a 1 mm edge."
+4. Finally, the slot edges (on both the front and back of the prism) are chamfered with a 1 mm edge."
 reference_stl: "./reference/task16.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [80,40,20] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.

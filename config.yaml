@@ -58,4 +58,4 @@ geometry_check:
   volume_threshold_percent: 1.0
 
 evaluation:
-  num_replicates: 4
+  num_replicates: 1
