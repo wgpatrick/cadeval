@@ -1,0 +1,13 @@
+task_id: "task23" # e.g., widget_01, bracket_complex_v2
+description: "This is a long rectangular arm with a handle. I’ll give you step by step instructions on how to make it. 
+
+1. Make a rectangular prism 120mm (X) x 20mm (Y) x 20mm (Z)
+2. Fillet the 4 edges (parallel to the Z axis) of the rectangle. The radius of the fillet is 10mm. 
+3. Next, we’re going to extrude out the handle. The center of the cylindrical handle is positioned 15mm from the end of the arm (in the X dimension). Start making the handle by creating a cylinder 10mm in diameter and extrude up 40mm. 
+4. Fillet the top edge of this cylinder with a radius of 5mm. This creates a hemisphere at the top of the handle. 
+5. Fillet the edge at the base of the handle that connects to the arm. The fillet radius should be 2mm"
+reference_stl: "./reference/task23.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [120,20,60] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.

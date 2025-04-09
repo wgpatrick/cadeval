@@ -1,5 +1,11 @@
 task_id: "task3" # e.g., widget_01, bracket_complex_v2
-description: "This is a 10mm thick circular plate. It’s actually a concentric circle (sort of like a gasket). The outer diameter is  100mm and the inner diameter is 50mm. There are two holes through the plate. One hole is at the 12 o’clock position (at the top of the plate). It’s halfway between the inner diameter and outer diameter (so the center hole is 37.5mm from the center of the circular plate. The hole is 5mm diameter. The second hole is in the 3 o’clock position. It’s also half way between the inner and outer diameter of the plate. This hole is 10mm in diameter."
+description: "This is a 10mm thick circular plate that has two holes. It's a concentric circle (sort of like a gasket). 
+
+The outer diameter of the plate is 100mm and the inner diameter is 50mm. 
+
+There are two holes through the plate. One hole is at the 12 o'clock position (at the top of the plate). It's halfway between the inner diameter and outer diameter (so the center hole is 37.5mm from the center of the circular plate. The hole is 5mm diameter. 
+
+The second hole is in the 3 o'clock position. It's also half way between the inner and outer diameter of the plate. This hole is 10mm in diameter."
 reference_stl: "./reference/task3.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [100,100,10] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.

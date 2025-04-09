@@ -1,0 +1,17 @@
+task_id: "task22" # e.g., widget_01, bracket_complex_v2
+description: "This is turned part that has a head and a shank. It’s a fairly specific shape and I’ll give you some step by step instructions. 
+
+1. First make a cylindrical head. The cylinder is 40mm in diameter (XY plane) and 15mm tall (Z). 
+
+2. Next make a cylindrical shank centered on top of the cylinder. The shank is 15mm diameter (XY) and 80mm tall (Z). 
+
+3. Create a filleted edge between the shank and the head of radius 5mm.
+
+4. Cut a hole (3mm diameter) through the center of the entire part (in Z dim)
+
+5. Chamfer the top of the shank. The chamfer edge length should be 2mm."
+reference_stl: "./reference/task22.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [40,40,95] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.

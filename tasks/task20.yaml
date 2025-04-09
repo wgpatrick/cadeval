@@ -1,0 +1,17 @@
+task_id: "task20" # e.g., widget_01, bracket_complex_v2
+description: "This is a milled part. It’s a specific shape and I’ll give you operation by operation instructions on how to create it in CAD.
+
+1. Start by creating a 80mm (X) x 50mm (Y) x 20mm (Z) rectangular prism.
+
+2. Fillet the 20mm long edges of this prism parallel to the Z axis. This creates a rectangular prism with curved edges. The radius of the fillet is 15mm. It’s a constant radius fillet. 
+
+3. Next we’re going to cut down (in the Z dimension) around the edges of the pieces. To do so, create an offset that is 5 mm from the edge of the existing shape towards the center of the piece. Then use that profile (created by this offset and the edge of the piece) and cut down 15mm into the piece with this profile. 
+
+4. Next we’re going to cut a through hole, diameter 5mm, cutting in the Z dimension. The center of the hole is positioned 6mm (in the Y dimension) from the midline of the piece that is parallel to the X axis. The hole is positioned 10mm (in the X dimension) from the edge of the piece. 
+
+5. Finally, we’re going to cut a large rectangular slot through the entire piece in the Z dimension. The rectangular slot is center in the piece (in the XY plane) and is 50mm (X) x 20mm (Y). The rectangular has 4 filleted corners, each with a radius of 5mm."
+reference_stl: "./reference/task20.stl" # Path relative to project root, ensure the STL file exists here.
+requirements:
+  bounding_box: [80,50,20] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  topology_requirements: # Optional section
+    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
