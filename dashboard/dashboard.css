@@ -38,19 +38,26 @@ h2 {
 }
 
 /* Chart Styles */
-#charts-container {
-    display: grid; /* Use grid instead of flex */
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); /* Create responsive columns */
+.charts-container {
+    display: grid;
+    /* Change to exactly 3 columns */
+    grid-template-columns: repeat(3, 1fr);
     gap: 20px;
-    margin-bottom: 30px;
+    /* Add max-width and center the container */
+    max-width: 1600px; /* Adjust this value as needed */
+    margin: 20px auto 30px auto; /* top auto bottom auto -> centers horizontally */
 }
 
 .chart-wrapper {
-    height: 300px; /* Fixed height for consistency */
-    background-color: #fff;
+    position: relative;
+    /* Increase height slightly to match increased width if needed */
+    height: 350px; /* Adjust as needed, maybe slightly taller */
+    background-color: #ffffff;
     padding: 15px;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    /* Setting an explicit wider width could also be an option, but minmax with grid is often better */
+    /* min-width: 500px; */ /* Example if not using auto-fit columns effectively */
 }
 
 /* AG-Grid Styles */

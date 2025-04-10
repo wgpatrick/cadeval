@@ -1,7 +1,7 @@
 task_id: "task6" # e.g., widget_01, bracket_complex_v2
 description: "This is a rectangular plate with a single hole with a counterbore. 
 
-1. The rectangular prism is 20mm wide and 50mm long with 5mm thickness. 
+1. The rectangular prism is 20mm wide and 40mm long with 5mm thickness. 
 
 2. The hole is 4mm in diameter. Looking down at the plate the centerpoint of the circle is 5mm from one of the long edges and its centered in the other direction (10mm from either side). 
 
