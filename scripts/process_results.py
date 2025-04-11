@@ -499,15 +499,27 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
                 t_stat["chamfer_pass_count"] += 1
 
             # Collect numeric metrics if checks were attempted
-            for metric_key in metrics_to_aggregate:
-                val_str = entry.get(metric_key)
-                if val_str is not None and val_str not in ["N/A", "Inf", "NaN"]:
-                    try:
-                        val_float = float(val_str)
-                        m_stat["metrics"][metric_key].append(val_float)
-                        t_stat["metrics"][metric_key].append(val_float)
-                    except (ValueError, TypeError):
-                        logger.debug(f"Could not convert metric '{metric_key}' value '{val_str}' to float for stats.")
+            # --- Collect Chamfer Distance (using correct key) ---
+            chamfer_val = entry.get("geometric_similarity_distance")
+            if chamfer_val is not None and not isinstance(chamfer_val, str) and not np.isinf(chamfer_val) and not np.isnan(chamfer_val):
+                try:
+                    m_stat["metrics"]["chamfer_dist"].append(float(chamfer_val))
+                    t_stat["metrics"]["chamfer_dist"].append(float(chamfer_val))
+                except (ValueError, TypeError):
+                     logger.debug(f"Could not convert Chamfer value '{chamfer_val}' to float.")
+            elif isinstance(chamfer_val, str):
+                 logger.debug(f"Skipping non-numeric Chamfer value: {chamfer_val}")
+
+            # --- Collect Hausdorff 95p Distance (using correct key) ---
+            haus_95p_val = entry.get("hausdorff_95p_distance")
+            if haus_95p_val is not None and not isinstance(haus_95p_val, str) and not np.isinf(haus_95p_val) and not np.isnan(haus_95p_val):
+                 try:
+                    m_stat["metrics"]["haus_95p_dist"].append(float(haus_95p_val))
+                    t_stat["metrics"]["haus_95p_dist"].append(float(haus_95p_val))
+                 except (ValueError, TypeError):
+                     logger.debug(f"Could not convert Hausdorff 95p value '{haus_95p_val}' to float.")
+            elif isinstance(haus_95p_val, str):
+                 logger.debug(f"Skipping non-numeric Hausdorff 95p value: {haus_95p_val}")
 
     # --- Calculate Rates and Statistics --- Need to handle nested model_stats
     def calculate_final_stats(stat_dict, is_nested=False):

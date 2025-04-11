@@ -158,6 +158,13 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
     };
     // --- Data Preparation for Grouped Bars --- END ---
 
+    // --- >>> DEBUGGING START <<< ---
+    console.log("--- Chart Data Debugging ---");
+    console.log("Model Names:", modelNames);
+    console.log("Prompt Keys:", promptKeys);
+    console.log("Populated Datasets:", JSON.parse(JSON.stringify(datasets))); // Deep copy for clean logging
+    // --- >>> DEBUGGING END <<< ---
+
     const commonChartOptions = {
         scales: {
             y: { beginAtZero: true }
@@ -203,11 +210,15 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
 
     // 1. Overall Success Rate Chart
     const successCtx = document.getElementById('successRateChart').getContext('2d');
+    // --- >>> DEBUGGING START <<< ---
+    const overallPassRateDatasets = createChartDatasets('overallPassRate', 'Overall Pass Rate');
+    console.log("Datasets for Overall Pass Rate Chart:", JSON.parse(JSON.stringify(overallPassRateDatasets)));
+    // --- >>> DEBUGGING END <<< ---
     charts.successRate = new Chart(successCtx, {
         type: 'bar',
         data: {
             labels: modelNames,
-            datasets: createChartDatasets('overallPassRate', 'Overall Pass Rate')
+            datasets: overallPassRateDatasets // Use the logged variable
         },
         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Overall Pass Rate (%) by Model & Prompt' }}}
     });
@@ -680,6 +691,17 @@ async function initializeDashboard() {
         renderComplexityChart(complexityAnalysis); // Call the new rendering function
         // --- Render Complexity Chart --- End ---
 
+        // --- Ensure Chart Container is Visible (Removed for Debugging) ---
+        // if (chartsContainer) {
+        //     chartsContainer.style.display = 'grid'; // Explicitly set display
+        //     chartsContainer.style.minHeight = '300px'; // Add minimum height
+        //     // Add style rule for canvas elements
+        //     const styleSheet = document.createElement("style");
+        //     styleSheet.innerText = `#charts-container canvas { min-height: 250px; width: 100% !important; }`;
+        //     document.head.appendChild(styleSheet);
+        // }
+        // --- End Ensure Chart Container is Visible ---
+
         // Render Grids for each model
         if (Object.keys(data.results_by_model).length > 0) {
             for (const [modelName, modelResults] of Object.entries(data.results_by_model)) {
@@ -734,6 +756,12 @@ async function initializeDashboard() {
         }
         console.log("--- End Layout Debugging ---");
         // --- DEBUG LOGGING for Layout --- End ---
+
+        // --- Set Final Display Style --- (Moved Here)
+        if (chartsContainer) {
+            chartsContainer.style.display = 'grid';
+        }
+        // --- End Set Final Display Style ---
 
     } catch (error) {
         console.error('Error initializing dashboard:', error);
