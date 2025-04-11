@@ -8,6 +8,7 @@ description: "This is a 10mm thick circular plate that has two holes. It's a con
 3. The second hole is in the 3 o'clock position. It's also half way between the inner and outer diameter of the plate. This hole is 10mm in diameter."
 reference_stl: "./reference/task3.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
-  bounding_box: [100,100,10] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
-  topology_requirements: # Optional section
-    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
+  bounding_box: [100, 100, 10]
+  topology_requirements:
+    expected_component_count: 1
+manual_operations: 3

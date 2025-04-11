@@ -6,7 +6,8 @@ let charts = {
     avgVolumeDiff: null,
     volumePassRate: null,
     hausdorffPassRate: null,
-    taskSuccessRate: null
+    taskSuccessRate: null,
+    complexityChart: null
 };
 
 // --- Helper Functions ---
@@ -23,10 +24,13 @@ function formatBooleanText(value) {
 
 // New formatter for Pass/Fail text
 function formatPassFailText(value) {
-    if (value === true) {
+    // Check for explicit true or the string "Pass" (case-insensitive)
+    if (value === true || String(value).toLowerCase() === 'pass') {
         return 'Pass';
-    } else if (value === false) {
+    // Check for explicit false or the string "Fail" (case-insensitive)
+    } else if (value === false || String(value).toLowerCase() === 'fail') {
         return 'Fail';
+    // Everything else (null, undefined, other strings) becomes N/A
     } else {
         return 'N/A';
     }
@@ -307,6 +311,65 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
     // --- Task Chart Logic (NEW) --- End ---
 }
 
+// --- NEW: Render Complexity Chart --- Start ---
+function renderComplexityChart(complexityAnalysis) {
+    const chartWrapper = document.getElementById('complexityChart').parentElement;
+    if (!complexityAnalysis || Object.keys(complexityAnalysis).length === 0) {
+        console.warn("No complexityAnalysis data provided for chart.");
+        if (chartWrapper) {
+            chartWrapper.style.display = 'none'; // Hide the wrapper if no data
+        }
+        return;
+    }
+    // Ensure wrapper is visible if we have data
+    if (chartWrapper) {
+        chartWrapper.style.display = 'block';
+    }
+
+    const ctx = document.getElementById('complexityChart').getContext('2d');
+    
+    // Prepare data
+    const opCounts = Object.keys(complexityAnalysis).map(Number).sort((a, b) => a - b);
+    const avgPassRates = opCounts.map(count => complexityAnalysis[count].avg_overall_pass_rate);
+
+    // Destroy existing chart if it exists
+    charts.complexityChart?.destroy();
+
+    // Use rateChartOptions defined in renderSummaryCharts (assuming it's accessible or redefined)
+    // For safety, let's re-establish a basic rate option structure here
+    const localRateChartOptions = {
+        scales: { 
+            y: { beginAtZero: true, max: 100, ticks: { callback: value => value + '%' } },
+            x: { // Add title to X-axis
+                title: {
+                    display: true,
+                    text: 'Number of Manual Operations'
+                }
+            }
+        },
+        maintainAspectRatio: false,
+        plugins: {
+             tooltip: { /* Add default tooltip or copy from commonChartOptions if needed */ },
+             title: { display: true, text: 'Average Pass Rate (%) by Task Complexity (Manual Operations)' }
+        }
+    };
+
+    charts.complexityChart = new Chart(ctx, {
+        type: 'bar', // Or 'line'
+        data: {
+            labels: opCounts.map(String), // X-axis labels
+            datasets: [{
+                label: 'Avg Overall Pass Rate',
+                data: avgPassRates,
+                backgroundColor: 'rgba(255, 159, 64, 0.6)', // Orange
+                borderColor: 'rgba(255, 159, 64, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: localRateChartOptions
+    });
+}
+// --- NEW: Render Complexity Chart --- End ---
 
 // --- NEW: Render Summary Tables ---
 function renderSummaryTables(metaStatistics, taskStatistics) {
@@ -422,32 +485,32 @@ function createModelHtmlTable(modelName, modelResults, container) {
     const thead = table.createTHead();
     const tbody = table.createTBody();
 
-    // Define Columns (aligned with NEW keys from process_results.py)
+    // Define Columns (UPDATED keys to match dashboard_data.json)
     const columns = [
-        { key: 'task_id', header: 'Task ID' },
-        { key: 'replicate_id', header: 'Rep ID' },
-        { key: 'prompt_key', header: 'Prompt' },
-        { key: 'scad_generation_success', header: 'SCAD Gen', format: formatPassFailText, isBoolean: true },
-        { key: 'check_render_successful', header: 'Render OK', format: formatPassFailText, isBoolean: true },
-        { key: 'checks_run_attempted', header: 'Checks Run', format: formatPassFailText, isBoolean: true },
-        { key: 'check_is_watertight', header: 'Watertight', format: formatPassFailText, isBoolean: true },
-        { key: 'check_is_single_component', header: 'Single Comp', format: formatPassFailText, isBoolean: true },
-        { key: 'check_bounding_box_accurate', header: 'BBox Acc.', format: formatPassFailText, isBoolean: true, tooltip: "Checks if aligned BBox dims are within tolerance" },
-        { key: 'check_volume_passed', header: 'Volume Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if volume difference % is within threshold" },
-        { key: 'check_hausdorff_passed', header: 'Hausdorff Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Hausdorff 95p distance is within threshold" },
-        { key: 'chamfer_check_passed', header: 'Chamfer Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Chamfer distance is within threshold" },
-        { key: 'chamfer_dist', header: 'Chamfer (mm)' },
+        { key: 'Task ID', header: 'Task ID' },
+        { key: 'Rep ID', header: 'Rep ID' },
+        { key: 'Prompt', header: 'Prompt' },
+        { key: 'Provider', header: 'Provider' },
+        { key: 'SCAD Gen', header: 'SCAD Gen', format: formatPassFailText, isBoolean: true }, // Keys match JSON now
+        { key: 'Render OK', header: 'Render OK', format: formatPassFailText, isBoolean: true },
+        { key: 'Watertight', header: 'Watertight', format: formatPassFailText, isBoolean: true },
+        { key: 'Single Comp', header: 'Single Comp', format: formatPassFailText, isBoolean: true },
+        { key: 'BBox Acc.', header: 'BBox Acc.', format: formatPassFailText, isBoolean: true, tooltip: "Checks if aligned BBox dims are within tolerance" },
+        { key: 'Volume Pass', header: 'Volume Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if volume difference % is within threshold" },
+        { key: 'Hausdorff Pass', header: 'Hausdorff Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Hausdorff 95p distance is within threshold" },
+        { key: 'Chamfer Pass', header: 'Chamfer Pass', format: formatPassFailText, isBoolean: true, tooltip: "Checks if Chamfer distance is within threshold" },
+        { key: 'Chamfer (mm)', header: 'Chamfer (mm)' }, // Key matches JSON
         {
-            key: 'haus_95p_dist',
+            key: 'Hausdorff Dist (95p / 99p mm)', // Key matches JSON
             header: 'Hausdorff Dist (95p / 99p mm)',
             hozAlign: "center",
             headerHozAlign: "center",
         },
-        { key: 'ref_vol', header: 'Vol Ref (mm³)' },
-        { key: 'gen_vol', header: 'Vol Gen (mm³)' },
-        { key: 'ref_bbox', header: 'BBox Ref (mm)' },
-        { key: 'gen_bbox', header: 'BBox Gen Aligned (mm)' },
-        { key: 'visualize_cmd', header: 'Visualize Cmd' },
+        { key: 'Vol Ref (mm³)', header: 'Vol Ref (mm³)' }, // Key matches JSON
+        { key: 'Vol Gen (mm³)', header: 'Vol Gen (mm³)' }, // Key matches JSON
+        { key: 'BBox Ref (mm)', header: 'BBox Ref (mm)' }, // Key matches JSON
+        { key: 'BBox Gen Aligned (mm)', header: 'BBox Gen Aligned (mm)' }, // Key matches JSON
+        { key: 'Visualize Cmd', header: 'Visualize Cmd' }, // Special handling below, key doesn't matter as much
     ];
 
     // Create header row
@@ -465,7 +528,8 @@ function createModelHtmlTable(modelName, modelResults, container) {
     modelResults.forEach(result => {
         const row = tbody.insertRow();
         // Use the pre-calculated overall_passed flag from the data
-        const isRowFullySuccessful = result.overall_passed === true; 
+        // Correct key access for overall status
+        const isRowFullySuccessful = result['Overall Passed'] === 'Pass';
 
         let taskIdCell = null;
         let repIdCell = null;
@@ -473,54 +537,57 @@ function createModelHtmlTable(modelName, modelResults, container) {
 
         columns.forEach(col => {
             const cell = row.insertCell();
-            let rawValue = result[col.key]; // Direct access using the key
+            // Direct access using the potentially-spaced key from dashboard_data.json
+            let rawValue = result[col.key];
             let displayValue = rawValue; // Default display value
             let cellStatusClass = '';
 
             // --- Specific Column Handling ---
-            if (col.key === 'visualize_cmd') {
-                const refPath = result.ref_stl_path;
-                const genPath = result.stl_path;
-                if (refPath && genPath) {
-                    const task = result.task_id || 'task';
-                    const model = result.model_name || 'model';
-                    const rep = result.replicate_id || 'repX';
-                    const title = `Viz: ${task}-${model}-Rep${rep} (Ref=Green, Gen=Red)`;
-                    displayValue = `python scripts/visualize_comparison.py --ref \"${refPath}\" --gen \"${genPath}\" --title \"${title}\"`;
-                    cell.textContent = "Run Cmd"; // Keep cell content short
-                    cell.title = displayValue; // Put full command in tooltip
-                    cell.style.cursor = 'pointer'; // Indicate clickable
-                    cell.onclick = () => navigator.clipboard.writeText(displayValue).then(() => alert('Command copied to clipboard!'), () => alert('Failed to copy command.'));
-                } else {
-                    displayValue = 'N/A';
-                    cell.textContent = displayValue;
-                }
-            } else if (col.key === 'haus_95p_dist') {
-                 const value95p = result.haus_95p_dist || 'N/A'; // Use pre-formatted value
-                 const value99p = result.haus_99p_dist || 'N/A';
-                 displayValue = `95p: ${value95p}<br>99p: ${value99p}`;
-                 if (value95p === 'N/A' && value99p === 'N/A') {
+            // Visualize Cmd needs original paths, which are NOT in the processed data.
+            // We need to decide: Either add those paths back to dashboard_data.json
+            // OR remove the visualize button from the dashboard table.
+            // For now, let's just make it N/A.
+            if (col.key === 'Visualize Cmd') {
+                // const refPath = result.ref_stl_path; // Not available in result object
+                // const genPath = result.stl_path; // Not available in result object
+                displayValue = 'N/A';
+                cell.textContent = displayValue;
+                cell.title = 'Visualize command generation requires raw result paths (not included in dashboard_data.json).';
+                cell.style.fontStyle = "italic";
+                cell.style.color = "#888";
+            }
+            // Handle Hausdorff combined display (key is correct now)
+            else if (col.key === 'Hausdorff Dist (95p / 99p mm)') {
+                 // rawValue already contains the formatted string like "95p: 1.1340\n99p: 1.3152"
+                 if (rawValue === null || typeof rawValue === 'undefined' || rawValue === 'N/A' || rawValue.includes('N/A')) {
                      cell.style.fontStyle = "italic";
                      cell.style.color = "#888";
                      displayValue = 'N/A';
                      cell.innerHTML = displayValue;
                  } else {
+                    // Replace newline characters for HTML display
+                    displayValue = rawValue.replace(/\\n/g, '<br>');
                     cell.innerHTML = displayValue; // Use innerHTML for <br>
                  }
                  cell.style.whiteSpace = 'normal';
                  cell.style.textAlign = 'center';
-            } else if (col.key === 'ref_bbox' || col.key === 'gen_bbox') {
-                 // Format BBox arrays
-                 if (Array.isArray(rawValue)) {
-                      displayValue = `[${rawValue.map(v => parseFloat(v).toFixed(1)).join(', ')}]`;
+            }
+            // Handle potentially stringified BBox arrays
+            else if (col.key === 'BBox Ref (mm)' || col.key === 'BBox Gen Aligned (mm)') {
+                 // The fmt function in process_results might have turned arrays into strings
+                 // Let's just display the raw string value from JSON
+                 if (rawValue !== null && typeof rawValue !== 'undefined') {
+                      displayValue = String(rawValue); // Ensure it's a string
                       cell.textContent = displayValue;
                  } else {
                       cell.textContent = 'N/A';
                  }
-            } else {
-                 // --- General Formatting and Styling ---
-                 // Use formatter if defined
+            }
+            // General formatting for other columns
+            else {
+                 // Use formatter if defined (applies to Pass/Fail columns)
                  if (col.format) {
+                     // Pass the raw value ('Pass', 'Fail', 'N/A', true, false, null)
                      displayValue = col.format(rawValue);
                  } else {
                      // Use raw value, handle null/undefined
@@ -530,33 +597,38 @@ function createModelHtmlTable(modelName, modelResults, container) {
             }
 
             // --- Determine Cell Status Class ---
-            // Check for null, undefined, OR the specific string "N/A"
-            if (rawValue === null || typeof rawValue === 'undefined' || displayValue === 'N/A') {
+            // Base decision on the raw value from JSON before formatting
+            if (rawValue === null || typeof rawValue === 'undefined' || rawValue === 'N/A') {
                 cellStatusClass = 'status-na';
-            } else if (col.isBoolean) {
-                cellStatusClass = rawValue === true ? 'status-yes' : 'status-no';
+            } else if (col.isBoolean) { // Check if it's a boolean Pass/Fail column
+                // Check against the expected Pass/Fail strings OR boolean true/false
+                if (rawValue === 'Pass' || rawValue === true) {
+                    cellStatusClass = 'status-yes';
+                } else if (rawValue === 'Fail' || rawValue === false) {
+                    cellStatusClass = 'status-no';
+                } else {
+                    cellStatusClass = 'status-na'; // Treat unexpected values as N/A visually
+                }
             }
-            // Add other specific styling logic if needed (e.g., for metrics)
-
             // Apply the status class
             if (cellStatusClass) {
                 cell.classList.add(cellStatusClass);
             }
 
-            // Store specific cells for later row-level styling
-            if (col.key === 'task_id') taskIdCell = cell;
-            if (col.key === 'replicate_id') repIdCell = cell;
-            if (col.key === 'prompt_key') promptCell = cell;
+            // Store specific cells for later row-level styling (using NEW keys)
+            if (col.key === 'Task ID') taskIdCell = cell;
+            if (col.key === 'Rep ID') repIdCell = cell;
+            if (col.key === 'Prompt') promptCell = cell;
         });
 
-        // Style Task ID cell based on overall success
+        // Style Task ID cell based on overall success (using NEW key)
         if (taskIdCell) {
             taskIdCell.classList.add(isRowFullySuccessful ? 'status-yes' : 'status-no');
         }
          // Optionally add styling to Rep ID cell too
          if (repIdCell) {
              // Example: Add subtle background based on success
-             repIdCell.style.backgroundColor = isRowFullySuccessful ? '#e6ffed' : '#ffebee'; 
+             repIdCell.style.backgroundColor = isRowFullySuccessful ? '#e6ffed' : '#ffebee';
          }
     });
 
@@ -603,6 +675,11 @@ async function initializeDashboard() {
         // Render Charts using meta_statistics AND task_statistics
         renderSummaryCharts(data.meta_statistics || {}, data.task_statistics || {}); // Pass both stats objects
 
+        // --- Render Complexity Chart --- Start ---
+        const complexityAnalysis = data.complexity_analysis; // Get the new data section
+        renderComplexityChart(complexityAnalysis); // Call the new rendering function
+        // --- Render Complexity Chart --- End ---
+
         // Render Grids for each model
         if (Object.keys(data.results_by_model).length > 0) {
             for (const [modelName, modelResults] of Object.entries(data.results_by_model)) {
@@ -621,6 +698,42 @@ async function initializeDashboard() {
         }
 
         loadingIndicator.style.display = 'none';
+
+        // --- DEBUG LOGGING for Layout --- Start ---
+        console.log("--- Layout Debugging --- Style issue ---");
+        if (chartsContainer) {
+            console.log("Charts Container Element:", chartsContainer);
+            const computedStyles = window.getComputedStyle(chartsContainer);
+            console.log("Charts Container Computed Styles:", {
+                display: computedStyles.display,
+                width: computedStyles.width,
+                maxWidth: computedStyles.maxWidth,
+                marginLeft: computedStyles.marginLeft,
+                marginRight: computedStyles.marginRight,
+                boxSizing: computedStyles.boxSizing
+            });
+            console.log("Charts Container offsetWidth:", chartsContainer.offsetWidth);
+
+            const parentElement = chartsContainer.parentElement;
+            if (parentElement) {
+                console.log("Parent Element:", parentElement);
+                 const parentComputedStyles = window.getComputedStyle(parentElement);
+                 console.log("Parent Computed Styles:", {
+                    display: parentComputedStyles.display,
+                    alignItems: parentComputedStyles.alignItems,
+                    justifyContent: parentComputedStyles.justifyContent,
+                    width: parentComputedStyles.width,
+                    boxSizing: parentComputedStyles.boxSizing
+                 });
+                console.log("Parent offsetWidth:", parentElement.offsetWidth);
+            } else {
+                console.log("Charts container has no parent element?");
+            }
+        } else {
+            console.log("Could not find #charts-container element for debugging.");
+        }
+        console.log("--- End Layout Debugging ---");
+        // --- DEBUG LOGGING for Layout --- End ---
 
     } catch (error) {
         console.error('Error initializing dashboard:', error);

@@ -1,15 +1,18 @@
 task_id: "task25" # e.g., widget_01, bracket_complex_v2
-description: "This shape looks like a grain silo with a hole cut through the center. I’ll tell you how to make it step by step. 
+description: | # Use literal block scalar for multi-line string
+  This shape looks like a grain silo with a hole cut through the center. I'll tell you how to make it step by step.
 
-1. Start by making a cylinder that is 50mm diameter (in XY plane) and 50mm tall (Z).
+  1. Start by making a cylinder that is 50mm diameter (in XY plane) and 50mm tall (Z).
 
-2. Next on top of the cylinder, add a hemisphere (half sphere) of diameter 50mm. The center point of the sphere is at the center of the circle that is on top (Z=50) of the cylinder. This hemisphere creates the top shape of the “silo” like structure. 
+  2. Next on top of the cylinder, add a hemisphere (half sphere) of diameter 50mm. The center point of the sphere is at the center of the circle that is on top (Z=50) of the cylinder. This hemisphere creates the top shape of the "silo" like structure.
 
-3. Next we’re going to cut out a 50mm diameter hemisphere to cut out a hemisphere at the bottom of the silo. The centerpoint of the sphere (used to cut) is centered on the circle at the bottom (Z=0) of the cylinder. 
+  3. Next we're going to cut out a 50mm diameter hemisphere to cut out a hemisphere at the bottom of the silo. The centerpoint of the sphere (used to cut) is centered on the circle at the bottom (Z=0) of the cylinder.
 
-4. Finally, we’re going to add a hole through the center of the zilo in the Z dimension. The diameter of the hole is 10mm."
+  4. Finally, we're going to add a hole through the center of the zilo in the Z dimension. The diameter of the hole is 10mm.
 reference_stl: "./reference/task25.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [50,50,74.495] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
   topology_requirements: # Optional section
     expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
+
+manual_operations: 4

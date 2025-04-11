@@ -43,6 +43,11 @@
           }
         }
       }
+    },
+    "manual_operations": {
+      "type": ["integer", "null"],
+      "description": "Manually tallied number of operations required for the task (optional)",
+      "minimum": 1
     }
   },
   "additionalProperties": false

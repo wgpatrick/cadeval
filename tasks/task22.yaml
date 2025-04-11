@@ -1,5 +1,5 @@
 task_id: "task22" # e.g., widget_01, bracket_complex_v2
-description: "This is turned part that has a head and a shank. It’s a fairly specific shape and I’ll give you some step by step instructions. 
+description: "This is turned part that has a head and a shank. It's a fairly specific shape and I'll give you some step by step instructions. 
 
 1. First make a cylindrical head. The cylinder is 40mm in diameter (XY plane) and 15mm tall (Z). 
 
@@ -15,3 +15,4 @@ requirements:
   bounding_box: [40,40,95] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
   topology_requirements: # Optional section
     expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
+manual_operations: 5

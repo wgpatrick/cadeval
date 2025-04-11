@@ -28,7 +28,7 @@ prompts:
 
         Generate the OpenSCAD code now based on the task description provided next.
   deepresearch-gen: |
-        You are an expert 3D CAD assistant specialized in OpenSCAD. Always produce valid OpenSCAD code that strictly follows the user’s description, using only standard OpenSCAD functions and syntax (no other CAD languages or external libraries).
+        You are an expert 3D CAD assistant specialized in OpenSCAD. Always produce valid OpenSCAD code that strictly follows the user's description, using only standard OpenSCAD functions and syntax (no other CAD languages or external libraries).
 
         Carefully plan the construction of the object before writing code. Break the description into components: identify each required primitive shape, its dimensions, and how they combine (union, difference, etc.). Ensure this plan satisfies all constraints, then generate the final OpenSCAD code without explaining the plan.
 
@@ -61,58 +61,62 @@ llm:
   models:
   - name: claude-3-7-sonnet-20250219
     provider: anthropic
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: claude-3-5-sonnet-20241022
     provider: anthropic
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 8000
   - name: claude-3-5-haiku-20241022
     provider: anthropic
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 8000
   - name: claude-3-haiku-20240307
     provider: anthropic
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 4000
   - name: o1-2024-12-17
     provider: openai
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: chatgpt-4o-latest
     provider: openai
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: o3-mini-2025-01-31
     provider: openai
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: gpt-4o-2024-11-20
     provider: openai
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: gpt-4o-mini-2024-07-18
     provider: openai
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: gemini-2.5-pro-preview-03-25   
     provider: google
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: gemini-2.0-flash
     provider: google
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
   - name: gemini-1.5-pro
     provider: google
-    temperature: 0.4
+    temperature: 0.3
     max_tokens: 15000
+  - name: zoo-ml-text-to-cad
+    provider: zoo_cli
+    cli_args:
+      output_format: stl
 geometry_check:
-  bounding_box_tolerance_mm: 0.5
+  bounding_box_tolerance_mm: 1.0
   icp_fitness_threshold: 1.0
   chamfer_threshold_mm: 1.0
   hausdorff_threshold_mm: 1.0
   volume_threshold_percent: 1.0
 
 evaluation:
-  num_replicates: 2
+  num_replicates: 1

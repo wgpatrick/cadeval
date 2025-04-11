@@ -8,6 +8,7 @@ description: "This is a rectangular plate with a single hole with a counterbore.
 3. The counterbore is 8mm in diameter and is cut 2mm down into the plate."
 reference_stl: "./reference/task6.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
-  bounding_box: [40,20,5] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
-  topology_requirements: # Optional section
-    expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
+  bounding_box: [40, 20, 5]
+  topology_requirements:
+    expected_component_count: 1
+manual_operations: 3

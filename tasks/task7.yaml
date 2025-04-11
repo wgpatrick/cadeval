@@ -5,3 +5,4 @@ requirements:
   bounding_box: [60,60,10] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
   topology_requirements: # Optional section
     expected_component_count: 2 # Usually 1 for single parts. Remove if not needed.
+manual_operations: 1

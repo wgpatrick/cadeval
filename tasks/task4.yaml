@@ -8,6 +8,7 @@ description: "I'm building a metal pin. It's a single part created using 3 opera
 3. Finally, there's a chamfer on the head of the pin, on the top of it. In other words, if the pin was sitting on its head with the shaft in the sky, the chamfered edge of the head would be towards the ground. The chamfer is 2mm in size (the edge length of the chamfer)."
 reference_stl: "./reference/task4.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
-  bounding_box: [35,35,80] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
+  bounding_box: [35, 35, 80] # Reverted to original
   topology_requirements: # Optional section
     expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
+manual_operations: 3

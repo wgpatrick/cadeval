@@ -1,7 +1,8 @@
 task_id: "task8" # e.g., widget_01, bracket_complex_v2
-description: "This is a 20mm x 20mm x 80 mm solid rectangular prism. All 12 edges of the solid have a 1mm fillet."
+description: "This is a 20mm x 20mm x 80 mm solid rectangular prism. All 12 edges of the solid have a 1mm chamfer."
 reference_stl: "./reference/task8.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [20,20,80] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
   topology_requirements: # Optional section
     expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
+manual_operations: 2

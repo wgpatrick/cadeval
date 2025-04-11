@@ -13,7 +13,8 @@ from collections import defaultdict
 import sys
 import numpy as np # Import numpy
 import yaml
-from typing import List, Dict, Any, Tuple
+import glob # Import glob
+from typing import List, Dict, Any, Tuple, Optional
 
 # --- Add project root to sys.path --- Start ---
 # Get the absolute path of the script's directory
@@ -35,6 +36,59 @@ except ImportError as e:
     sys.exit(1)
 
 logger = logging.getLogger(__name__) # Use standard logger
+
+# --- Helper Function: Load Task Complexities --- Start ---
+def load_task_complexities(task_dir: str) -> Dict[str, Optional[int]]:
+    """Loads task complexities (manual_operations) from YAML files.
+
+    Args:
+        task_dir: The directory containing task YAML files.
+
+    Returns:
+        A dictionary mapping task_id to its manual_operations count (int) or None.
+    """
+    complexity_map = {}
+    logger.info(f"Loading task complexities from directory: {task_dir}")
+    task_files = glob.glob(os.path.join(task_dir, "task*.yaml"))
+    if not task_files:
+        logger.warning(f"No task YAML files found in {task_dir}")
+        return {}
+
+    for task_file in task_files:
+        try:
+            with open(task_file, 'r') as f:
+                task_data = yaml.safe_load(f)
+                if not isinstance(task_data, dict):
+                    logger.warning(f"Skipping {task_file}: Expected a dictionary, got {type(task_data)}")
+                    continue
+
+                task_id = task_data.get("task_id")
+                complexity = task_data.get("manual_operations")
+
+                if task_id is None:
+                    logger.warning(f"Skipping {task_file}: Missing 'task_id' key.")
+                    continue
+
+                if complexity is None:
+                    logger.warning(f"Task '{task_id}' in {task_file}: Missing 'manual_operations' key. Complexity will be None.")
+                    complexity_map[str(task_id)] = None
+                else:
+                    try:
+                        complexity_map[str(task_id)] = int(complexity)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Task '{task_id}' in {task_file}: Invalid value '{complexity}' for 'manual_operations'. Must be an integer. Complexity will be None.")
+                        complexity_map[str(task_id)] = None
+
+        except yaml.YAMLError as e:
+            logger.error(f"Error parsing YAML file {task_file}: {e}")
+        except IOError as e:
+            logger.error(f"Error reading file {task_file}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error processing {task_file}: {e}", exc_info=True)
+
+    logger.info(f"Loaded complexities for {len(complexity_map)} tasks.")
+    return complexity_map
+# --- Helper Function: Load Task Complexities --- End ---
 
 # --- Configuration Loading ---
 def load_config(config_path="config.yaml"):
@@ -120,16 +174,18 @@ def process_data_for_dashboard(results: List[Dict[str, Any]], config: Config) ->
     """Processes the raw results data into the format needed for the dashboard."""
     dashboard_data = []
 
-    # --- Re-enable Threshold reading --- Start ---
+    # --- Threshold reading ---
     bbox_tolerance = get_threshold(config, 'geometry_check.bounding_box_tolerance_mm', 1.0)
-    hausdorff_threshold = get_threshold(config, 'geometry_check.hausdorff_threshold_mm', 0.5) # Use same default as geometry_check.py for 95p
+    hausdorff_threshold = get_threshold(config, 'geometry_check.hausdorff_threshold_mm', 1.0) # Updated default to match geometry_check
     volume_threshold = get_threshold(config, 'geometry_check.volume_threshold_percent', 1.0)
+    chamfer_threshold = get_threshold(config, 'geometry_check.chamfer_threshold_mm', 1.0)
 
     logger.info(f"Using thresholds for dashboard pass/fail determination:")
     logger.info(f"  - BBox Tolerance: +/- {bbox_tolerance} mm")
-    logger.info(f"  - Hausdorff 95p Threshold: {hausdorff_threshold} mm")
+    logger.info(f"  - Hausdorff 95p Threshold: {hausdorff_threshold} mm") # Log uses 95p threshold key
     logger.info(f"  - Volume Threshold: {volume_threshold}% diff")
-    # --- Re-enable Threshold reading --- End ---
+    logger.info(f"  - Chamfer Threshold: {chamfer_threshold} mm")
+    # --- End Threshold reading ---
 
     # Format numbers for display
     def fmt(val, precision=4):
@@ -141,12 +197,7 @@ def process_data_for_dashboard(results: List[Dict[str, Any]], config: Config) ->
             if np.isnan(f_val): return "NaN"
             return f"{f_val:.{precision}f}"
         except (ValueError, TypeError):
-            # Return the original value if it can't be formatted as float
-            return str(val)
-
-    # Add threshold for Chamfer
-    similarity_threshold = get_threshold(config, 'geometry_check.similarity_threshold_mm', 1.0)
-    logger.info(f"  - Chamfer Threshold: {similarity_threshold} mm")
+            return str(val) # Return original string if not a number
 
     for entry in results: # Iterating through raw replicate entries
         checks_data = entry.get("checks", {})
@@ -154,155 +205,117 @@ def process_data_for_dashboard(results: List[Dict[str, Any]], config: Config) ->
             logger.warning(f"Skipping entry due to invalid 'checks' format (expected dict): {entry.get('task_id', 'N/A')}/{entry.get('model_name', 'N/A')}")
             checks_data = {} # Use empty dict to avoid errors below
 
-        # --- Calculate boolean flags --- Start ---
-        scad_gen_success = entry.get("generation_error") is None or entry.get("generation_error") == ""
-        
-        render_status = entry.get("render_status", "N/A")
-        render_success = render_status == "Success"
-        
-        # Checks are considered run if render succeeded, allowing checks to execute.
-        checks_run_attempted = render_success 
+        provider = entry.get("provider") # Get provider for conditional logic
 
-        watertight = checks_data.get("check_is_watertight", entry.get("check_is_watertight"))
-        single_comp = checks_data.get("check_is_single_component", entry.get("check_is_single_component"))
-
-        # BBox Check
-        bbox_passed = None
-        ref_bbox_val = entry.get("reference_bbox_mm")
-        gen_bbox_val = entry.get("generated_bbox_aligned_mm")
-        if render_success and ref_bbox_val is not None and gen_bbox_val is not None:
-            try:
-                ref_dims = sorted([float(d) for d in ref_bbox_val])
-                gen_dims = sorted([float(d) for d in gen_bbox_val])
-                diffs = np.abs(np.array(gen_dims) - np.array(ref_dims))
-                bbox_passed = all(d <= bbox_tolerance for d in diffs)
-            except Exception as e:
-                logger.warning(f"Error calculating bbox diff for {entry.get('task_id')}/{entry.get('model_name')}/{entry.get('replicate_id')}: {e}")
-                bbox_passed = False # Fail if calculation errors
-        elif not render_success:
-            bbox_passed = None # Cannot check if render failed
-        elif checks_data.get("check_bounding_box_accurate") is not None:
-             bbox_passed = checks_data.get("check_bounding_box_accurate") # Fallback
+        # --- Determine Base Success Flags --- Adjust for Zoo --- 
+        scad_gen_display_value = None
+        if provider == "zoo_cli":
+             scad_gen_display_value = "N/A" # Zoo doesn't generate SCAD
         else:
-             bbox_passed = None # Indicate check couldn't be determined
+             # Original logic for non-Zoo providers
+             scad_gen_success = entry.get("generation_error") is None or entry.get("generation_error") == ""
+             scad_gen_display_value = "Pass" if scad_gen_success else "Fail"
 
-        # Hausdorff Check
-        hausdorff_passed = None
-        hausdorff_95p = entry.get("hausdorff_95p_distance")
-        if render_success and hausdorff_95p is not None:
-            try:
-                f_hausdorff_95p = float(hausdorff_95p)
-                if not np.isinf(f_hausdorff_95p) and not np.isnan(f_hausdorff_95p):
-                    hausdorff_passed = f_hausdorff_95p <= hausdorff_threshold
-                # else: hausdorff_passed remains None if inf/nan
-            except (ValueError, TypeError):
-                 hausdorff_passed = False # Fail if not a number
-        elif not render_success:
-            hausdorff_passed = None
-        elif checks_data.get("check_hausdorff_passed") is not None:
-            hausdorff_passed = checks_data.get("check_hausdorff_passed") # Fallback
+        render_ok_display = "N/A" # Default
+        if provider == "zoo_cli":
+             # For Zoo, "Render OK" means STL was successfully generated/found
+             stl_path_exists = entry.get("output_stl_path") is not None and entry.get("output_stl_path") != ""
+             render_ok_display = "Pass" if stl_path_exists else "Fail"
         else:
-            hausdorff_passed = None
+             # Original logic for non-Zoo providers
+             render_status = entry.get("render_status", "N/A")
+             render_success = render_status == "Success"
+             render_ok_display = render_success if render_status != "N/A" else "N/A"
 
-        # Volume Check
-        volume_passed = None
-        ref_vol = entry.get("reference_volume_mm3")
-        gen_vol = entry.get("generated_volume_mm3")
-        if render_success and ref_vol is not None and gen_vol is not None:
-            try:
-                 f_ref_vol = float(ref_vol)
-                 f_gen_vol = float(gen_vol)
-                 if abs(f_ref_vol) > 1e-9: # Avoid division by zero
-                     percent_diff = (abs(f_gen_vol - f_ref_vol) / abs(f_ref_vol)) * 100
-                     volume_passed = percent_diff <= volume_threshold
-                 else:
-                     volume_passed = abs(f_gen_vol) <= 1e-9 # Pass if both are essentially zero
-            except (ValueError, TypeError):
-                 volume_passed = False # Fail if not numbers
-        elif not render_success:
-            volume_passed = None
-        elif checks_data.get("check_volume_passed") is not None:
-             volume_passed = checks_data.get("check_volume_passed") # Fallback
-        else:
-            volume_passed = None
-
-        # Chamfer Check
-        chamfer_passed = None
-        chamfer_dist = entry.get("geometric_similarity_distance")
-        if render_success and chamfer_dist is not None:
-            try:
-                f_chamfer_dist = float(chamfer_dist)
-                if not np.isinf(f_chamfer_dist) and not np.isnan(f_chamfer_dist):
-                     chamfer_passed = f_chamfer_dist <= similarity_threshold
-            except (ValueError, TypeError):
-                 chamfer_passed = False # Fail if not a number
-        elif not render_success:
-            chamfer_passed = None
-        # No fallback for chamfer needed currently as it's not in `checks` dict
-        else:
-            chamfer_passed = None
-
-        # Recalculate Overall Passed - requires all checks that *could* run to be True
-        # Checks that are None (couldn't run) don't count against it.
-        required_checks = [
-            scad_gen_success, # Must always succeed
-            render_success,   # Must always succeed for checks to run
-            watertight,       # Check result (True/False/None)
-            single_comp,    # Check result (True/False/None)
-            bbox_passed,      # Check result (True/False/None)
-            volume_passed,    # Check result (True/False/None)
-            hausdorff_passed, # Check result (True/False/None)
-            chamfer_passed    # Check result (True/False/None)
+        # Check if geometry checks were run AT ALL.
+        # We infer this if *any* of the check keys (excluding render) exist and are not None.
+        # This handles cases where geometry_check.py might have exited early.
+        # Prioritize boolean check results if they exist.
+        check_keys_to_verify = [
+             "check_is_watertight", "check_is_single_component",
+             "check_bounding_box_accurate", "check_volume_passed",
+             "check_hausdorff_passed", "check_chamfer_passed"
         ]
-        
-        # Overall pass only if SCAD gen and render succeeded, AND
-        # all subsequent checks that were *not* None resulted in True.
-        if not scad_gen_success or not render_success:
-            overall_passed = False
-        else:
-            # Filter out None values and check if all remaining are True
-            applicable_checks = [c for c in required_checks[2:] if c is not None] # Skip first two, filter None
-            overall_passed = all(applicable_checks) if applicable_checks else True # Pass if no checks applicable after render
+        checks_run_executed = any(checks_data.get(key) is not None for key in check_keys_to_verify)
 
-        # --- Calculate boolean flags --- End ---
+        # --- Process Individual Check Results for Dashboard ---
 
-        dashboard_data.append({
-            "task_id": entry.get("task_id", "N/A"),
-            "model_name": entry.get("model_name", "N/A"),
-            "prompt_key": entry.get("prompt_key_used", "default"),
-            "replicate_id": entry.get("replicate_id", "N/A"),
-            # --- Raw Replicate Data ---
-            "render_status": render_status,
-            "render_err": entry.get("render_error_message", "") or "",
-            "gen_err": entry.get("generation_error", "") or "",
-            "check_err": entry.get("check_error", "") or "",
-            # --- Processed Boolean Flags ---
-            "scad_generation_success": bool(scad_gen_success), # Explicit bool cast
-            "checks_run_attempted": bool(checks_run_attempted), # Explicit bool cast
-            "check_render_successful": bool(render_success), # Explicit bool cast
-            # Checks below CAN be None if not run, so no bool() cast here
-            "check_is_watertight": watertight,
-            "check_is_single_component": single_comp,
-            "check_bounding_box_accurate": bbox_passed,
-            "check_volume_passed": volume_passed,
-            "check_hausdorff_passed": hausdorff_passed,
-            "chamfer_check_passed": chamfer_passed,
-            "overall_passed": bool(overall_passed), # Explicit bool cast
-            # --- Metrics (Formatted) ---
-            "chamfer_dist": fmt(chamfer_dist),
-            "haus_95p_dist": fmt(hausdorff_95p),
-            "haus_99p_dist": fmt(entry.get("hausdorff_99p_distance")),
-            "icp_fitness": fmt(entry.get("icp_fitness_score")),
-            "ref_vol": fmt(ref_vol, 2),
-            "gen_vol": fmt(gen_vol, 2),
-            "render_duration": fmt(entry.get("render_duration_seconds"), 2),
-            # --- Raw Details ---
-            "ref_bbox": ref_bbox_val, # Use variable holding the value
-            "gen_bbox": gen_bbox_val, # Use variable holding the value
-            "scad_path": entry.get("output_scad_path", ""),
-            "stl_path": entry.get("output_stl_path", ""),
-            "ref_stl_path": entry.get("reference_stl_path", "")
-        })
+        # Render OK (Based on actual render status)
+        render_ok_display = render_success if render_status != "N/A" else "N/A"
+
+        # Watertight (Directly from checks data if available)
+        watertight_passed = checks_data.get("check_is_watertight")
+
+        # Single Component (Directly from checks data if available)
+        single_comp_passed = checks_data.get("check_is_single_component")
+
+        # BBox Accuracy (Directly from checks data if available)
+        bbox_passed = checks_data.get("check_bounding_box_accurate")
+
+        # Volume Pass (Directly from checks data if available)
+        volume_passed = checks_data.get("check_volume_passed")
+
+        # Hausdorff Pass (Directly from checks data if available)
+        hausdorff_passed = checks_data.get("check_hausdorff_passed")
+
+        # Chamfer Pass (Directly from checks data if available)
+        chamfer_passed = checks_data.get("check_chamfer_passed")
+
+        # --- Determine Overall Checks Run Status for Dashboard ---
+        # Show "Pass" if checks were executed AND none of the executed checks failed.
+        # Show "Fail" if checks were executed BUT at least one executed check failed.
+        # Show "N/A" if checks were not executed at all (e.g., gen failed, STL missing).
+        checks_run_display = "N/A" # Default if not executed
+        if checks_run_executed:
+             all_executed_checks_passed = True
+             for key in check_keys_to_verify:
+                 result = checks_data.get(key)
+                 if result is False: # Check specifically for False, ignore None
+                     all_executed_checks_passed = False
+                     break
+             checks_run_display = "Pass" if all_executed_checks_passed else "Fail"
+
+        # --- Overall Pass Calculation ---
+        # Consider a run successful overall if SCAD gen passed AND
+        # (EITHER rendering passed AND all executed checks passed)
+        # OR (rendering was N/A AND all executed checks passed)
+        # This means for zoo_cli, success depends on scad_gen and checks_run_display == "Pass".
+        # For others, it depends on scad_gen, render_ok_display == "Pass", and checks_run_display == "Pass".
+
+        components_passed = [scad_gen_success]
+        if render_status != "N/A": # Only include render check if it was applicable
+             components_passed.append(render_success)
+        if checks_run_executed: # Only include check results if they were run
+             # Use the individual booleans from checks_data for overall calc
+             components_passed.extend(result for key in check_keys_to_verify if (result := checks_data.get(key)) is not None)
+
+        overall_passed = all(comp is True for comp in components_passed if comp is not None)
+
+        # --- Format data for dashboard row ---
+        row_data = {
+            "Task ID": entry.get("task_id", "N/A"),
+            "Rep ID": entry.get("replicate_id", "N/A"),
+            "Prompt": entry.get("prompt_key_used", "N/A"),
+            "Provider": provider, # Use provider variable
+            "Model Name": entry.get("model_name", "N/A"), # ADD MODEL NAME
+            "SCAD Gen": scad_gen_display_value, # Use new display value
+            "Render OK": render_ok_display, # Use new display value
+            "Watertight": "Pass" if watertight_passed is True else "Fail" if watertight_passed is False else "N/A",
+            "Single Comp": "Pass" if single_comp_passed is True else "Fail" if single_comp_passed is False else "N/A",
+            "BBox Acc.": "Pass" if bbox_passed is True else "Fail" if bbox_passed is False else "N/A",
+            "Volume Pass": "Pass" if volume_passed is True else "Fail" if volume_passed is False else "N/A",
+            "Hausdorff Pass": "Pass" if hausdorff_passed is True else "Fail" if hausdorff_passed is False else "N/A",
+            "Chamfer Pass": "Pass" if chamfer_passed is True else "Fail" if chamfer_passed is False else "N/A",
+            "Chamfer (mm)": fmt(entry.get("geometric_similarity_distance")),
+            "Hausdorff Dist (95p / 99p mm)": f"95p: {fmt(entry.get('hausdorff_95p_distance'))}\\n99p: {fmt(entry.get('hausdorff_99p_distance'))}",
+            "Vol Ref (mm³)": fmt(entry.get("reference_volume_mm3")),
+            "Vol Gen (mm³)": fmt(entry.get("generated_volume_mm3")),
+            "BBox Ref (mm)": fmt(entry.get("reference_bbox_mm")),
+            "BBox Gen Aligned (mm)": fmt(entry.get("generated_bbox_aligned_mm")),
+            "Overall Passed": "Pass" if overall_passed else "Fail", # Use calculated boolean
+            # Add other fields as needed...
+        }
+        dashboard_data.append(row_data)
 
     logger.info(f"Processed {len(dashboard_data)} replicate entries for dashboard.")
     return dashboard_data
@@ -451,10 +464,10 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
         t_stat["total_replicates"] += 1
 
         # Increment success counts based on boolean flags
-        if entry.get("scad_generation_success") is True:
+        if entry.get("scad_gen_success") is True:
             m_stat["scad_generation_success_count"] += 1
             t_stat["scad_generation_success_count"] += 1
-        if entry.get("check_render_successful") is True:
+        if entry.get("render_success") is True:
             m_stat["render_success_count"] += 1
             t_stat["render_success_count"] += 1
         if entry.get("overall_passed") is True:
@@ -462,26 +475,26 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
             t_stat["overall_pass_count"] += 1
 
         # Increment check-related counts only if checks were attempted
-        checks_attempted = entry.get("checks_run_attempted") is True
+        checks_attempted = entry.get("checks_run_executed") is True
         if checks_attempted:
             m_stat["checks_run_count"] += 1
             t_stat["checks_run_count"] += 1
-            if entry.get("check_is_watertight") is True:
+            if entry.get("watertight_passed") is True:
                 m_stat["watertight_pass_count"] += 1
                 t_stat["watertight_pass_count"] += 1
-            if entry.get("check_is_single_component") is True:
+            if entry.get("single_comp_passed") is True:
                 m_stat["single_comp_pass_count"] += 1
                 t_stat["single_comp_pass_count"] += 1
-            if entry.get("check_bounding_box_accurate") is True:
+            if entry.get("bbox_passed") is True:
                 m_stat["bbox_acc_pass_count"] += 1
                 t_stat["bbox_acc_pass_count"] += 1
-            if entry.get("check_volume_passed") is True:
+            if entry.get("volume_passed") is True:
                 m_stat["volume_pass_count"] += 1
                 t_stat["volume_pass_count"] += 1
-            if entry.get("check_hausdorff_passed") is True:
+            if entry.get("hausdorff_passed") is True:
                 m_stat["hausdorff_pass_count"] += 1
                 t_stat["hausdorff_pass_count"] += 1
-            if entry.get("chamfer_check_passed") is True:
+            if entry.get("chamfer_passed") is True:
                 m_stat["chamfer_pass_count"] += 1
                 t_stat["chamfer_pass_count"] += 1
 
@@ -583,6 +596,65 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
     return final_model_stats, final_task_stats
 # --- New Summary Statistics Calculation Function --- End ---
 
+# --- Helper Function: Calculate Complexity Statistics --- Start ---
+def calculate_complexity_statistics(processed_data: List[Dict[str, Any]], complexity_map: Dict[str, Optional[int]]) -> Dict[int, Dict]:
+    """Calculates statistics grouped by task complexity (manual operations).
+
+    Args:
+        processed_data: List of processed replicate results.
+        complexity_map: Dictionary mapping task_id to manual_operations count.
+
+    Returns:
+        Dictionary keyed by operation count, containing aggregated stats.
+    """
+    logger.info("Calculating statistics based on task complexity...")
+    stats_by_complexity = defaultdict(lambda: {
+        "total_replicates": 0,
+        "overall_pass_count": 0,
+        # Optional: Add lists for other metrics here if needed
+        # "metrics": defaultdict(list)
+    })
+
+    for entry in processed_data:
+        task_id = entry.get("task_id")
+        if not task_id:
+            continue # Skip if task_id is missing
+
+        operations = complexity_map.get(str(task_id))
+
+        # Only process if complexity is a valid integer
+        if operations is not None and isinstance(operations, int):
+            stats = stats_by_complexity[operations]
+            stats["total_replicates"] += 1
+            if entry.get("overall_passed") is True:
+                stats["overall_pass_count"] += 1
+            # Optional: Collect other metrics here
+            # chamfer = entry.get("chamfer_dist")
+            # if chamfer not in ["N/A", "Inf", "NaN", None]:
+            #     try: stats["metrics"]["chamfer_dist"].append(float(chamfer))
+            #     except ValueError: pass # Ignore conversion errors
+
+    # Calculate final rates and averages
+    final_complexity_stats = {}
+    for op_count, stats in stats_by_complexity.items():
+        total_reps = stats["total_replicates"]
+        if total_reps > 0:
+            avg_pass_rate = (stats["overall_pass_count"] / total_reps * 100)
+            final_complexity_stats[op_count] = {
+                "total_replicates": total_reps,
+                "overall_pass_count": stats["overall_pass_count"],
+                "avg_overall_pass_rate": avg_pass_rate
+                # Optional: Calculate avg/median/stdev for other collected metrics
+            }
+        else:
+             logger.warning(f"Complexity level {op_count} had 0 total replicates recorded.")
+
+    logger.info(f"Calculated complexity statistics for {len(final_complexity_stats)} complexity levels.")
+    # Sort by operation count for predictable output (optional but nice)
+    return dict(sorted(final_complexity_stats.items()))
+
+# --- Helper Function: Calculate Complexity Statistics --- End ---
+
 # --- Saving Results ---
 def save_dashboard_data(data: List[Dict[str, Any]], output_path: str):
     """Saves the processed data as a JSON file for the dashboard."""
@@ -607,89 +679,166 @@ def save_dashboard_data(data: List[Dict[str, Any]], output_path: str):
         logger.error(f"Unexpected error saving dashboard data: {e}")
 
 def main(args):
-    # Load configuration
-    config = load_config()
-
-    # Load results
-    logger.info(f"Loading results from: {args.results_path}")
-    raw_results = load_results(args.results_path)
-    if not raw_results:
-        logger.error("No results found or failed to load results.")
-        sys.exit(1)
-
-    # --- Process for Dashboard (Individual Replicates) ---
-    logger.info("Processing data for dashboard...")
-    dashboard_data = process_data_for_dashboard(raw_results, config)
-    if not dashboard_data:
-        logger.warning("Processing for dashboard yielded no data.")
-        # Still continue to try and create empty stats if needed
-        
-    # --- Calculate Summary Statistics --- Start ---
-    meta_stats, task_stats = {}, {} # Initialize empty in case processing failed
-    if dashboard_data:
+    # --- Setup ---
+    # Initialize logger locally first
+    logger = logging.getLogger(__name__)
+    try:
+        # Setup logger using the function from logger_setup
+        # Ensure setup_logger is defined and imported correctly
+        # Check if scripts.logger_setup is available
         try:
-            meta_stats, task_stats = calculate_summary_statistics(dashboard_data)
-        except Exception as e:
-             logger.error(f"Failed to calculate summary statistics: {e}", exc_info=True)
-             # Keep meta_stats and task_stats as empty dicts
-    # --- Calculate Summary Statistics --- End ---
+            from scripts.logger_setup import setup_logger
+            setup_logger(__name__, level=args.log_level.upper()) # Use __name__ for the logger
+        except ImportError:
+            logger.warning("logger_setup not found, using basicConfig.")
+            # Fallback to basic logging if logger_setup is missing
+            logging.basicConfig(level=args.log_level.upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            # No need to reassign logger here, basicConfig configures the root logger
+            # logger = logging.getLogger(__name__) # REMOVED
 
+        # Load configuration
+        config = load_config()
+        logger.info("Configuration loaded successfully from config.yaml") # Now logger is guaranteed to exist
 
-    # --- Restructure data for dashboard JS --- Start ---
+        # Load task complexities
+        task_dir = config.get('tasks.directory', os.path.join(project_root, 'tasks')) # Get task dir from config or default
+        complexity_map = load_task_complexities(task_dir)
+
+        # Load raw results data
+        all_results = load_results(args.results_path)
+        if not all_results:
+            logger.error("No results loaded. Exiting.")
+            return
+
+    except (FileNotFoundError, yaml.YAMLError, ImportError, Exception) as e:
+         # Catch potential errors during setup
+         # Logger will exist here even if basicConfig was used
+         logger.critical(f"Critical error during setup: {e}", exc_info=True)
+         sys.exit(1) # Exit if setup fails
+    # --- End Setup ---
+
+    # --- Prepare Data for Summaries ---
+    logger.info("Preparing data for summary calculations...")
+    data_for_summaries = []
+    for entry in all_results:
+        summary_entry = {}
+        checks_data = entry.get("checks", {})
+        if not isinstance(checks_data, dict): checks_data = {}
+
+        # Copy original keys needed for grouping/identification
+        summary_entry["task_id"] = entry.get("task_id")
+        summary_entry["model_name"] = entry.get("model_name")
+        summary_entry["prompt_key_used"] = entry.get("prompt_key_used", "default")
+        summary_entry["provider"] = entry.get("provider") # Keep provider info if needed
+
+        # --- Recalculate boolean flags based on raw data ---
+        summary_entry["scad_gen_success"] = entry.get("generation_error") is None or entry.get("generation_error") == ""
+        render_status = entry.get("render_status", "N/A")
+        summary_entry["render_success"] = render_status == "Success"
+        summary_entry["render_applicable"] = render_status != "N/A"
+        summary_entry["watertight_passed"] = checks_data.get("check_is_watertight")
+        summary_entry["single_comp_passed"] = checks_data.get("check_is_single_component")
+        summary_entry["bbox_passed"] = checks_data.get("check_bounding_box_accurate")
+        summary_entry["volume_passed"] = checks_data.get("check_volume_passed")
+        summary_entry["hausdorff_passed"] = checks_data.get("check_hausdorff_passed")
+        summary_entry["chamfer_passed"] = checks_data.get("check_chamfer_passed")
+        check_keys_to_verify = [
+             "check_is_watertight", "check_is_single_component",
+             "check_bounding_box_accurate", "check_volume_passed",
+             "check_hausdorff_passed", "check_chamfer_passed"
+        ]
+        summary_entry["checks_run_executed"] = any(checks_data.get(key) is not None for key in check_keys_to_verify)
+        summary_entry["overall_checks_passed"] = False # Default to False
+        if summary_entry["checks_run_executed"]:
+            all_executed_checks_passed = True
+            for key in check_keys_to_verify:
+                result = checks_data.get(key)
+                if result is False: # Specifically check for False
+                    all_executed_checks_passed = False
+                    break
+            summary_entry["overall_checks_passed"] = all_executed_checks_passed
+        components_passed = [summary_entry["scad_gen_success"]]
+        if summary_entry["render_applicable"]:
+             components_passed.append(summary_entry["render_success"])
+        if summary_entry["checks_run_executed"]:
+             components_passed.append(summary_entry["overall_checks_passed"])
+        summary_entry["overall_passed"] = all(comp is True for comp in components_passed if comp is not None)
+        summary_entry["geometric_similarity_distance"] = entry.get("geometric_similarity_distance")
+        summary_entry["hausdorff_95p_distance"] = entry.get("hausdorff_95p_distance")
+
+        if summary_entry["task_id"] and summary_entry["model_name"]:
+             data_for_summaries.append(summary_entry)
+        else:
+             logger.warning(f"Skipping entry for summary calculation due to missing task_id or model_name in original data: {entry.get('task_id')}/{entry.get('model_name')}")
+
+    # --- Calculate Summaries ---
+    logger.info("Calculating summary statistics for models (per prompt) and tasks...")
+    meta_stats, task_stats = calculate_summary_statistics(data_for_summaries)
+    logger.info(f"Finished calculating summary statistics for {len(meta_stats)} models (across prompts) and {len(task_stats)} tasks.")
+
+    # --- Calculate Complexity Statistics ---
+    logger.info("Calculating statistics based on task complexity...")
+    complexity_analysis = calculate_complexity_statistics(data_for_summaries, complexity_map)
+    logger.info(f"Calculated complexity statistics for {len(complexity_analysis)} complexity levels.")
+
+    # --- Process Data for Dashboard Detail View ---
+    logger.info("Processing data for dashboard detail display...")
+    dashboard_details_data = process_data_for_dashboard(all_results, config)
+
+    # --- Restructure data for dashboard JS ---
     logger.info("Restructuring data for the expected dashboard format...")
-    results_by_model = defaultdict(list)
-    # Group the already processed dashboard_data (flat list)
-    for entry in dashboard_data:
-        model_name = entry.get("model_name", "unknown_model")
-        results_by_model[model_name].append(entry)
-    
-    # Try to extract run_id from the input path
+    # Group dashboard details by model for the final output
+    results_by_model_for_dashboard = defaultdict(list)
+    for detail_entry in dashboard_details_data:
+        # Use "Model Name" as the key for grouping in the dashboard display
+        model_name_key = detail_entry.get("Model Name", "Unknown Model")
+        results_by_model_for_dashboard[model_name_key].append(detail_entry)
+
+    # Extract run_id
     run_id = "unknown_run"
     try:
         path_part = os.path.basename(args.results_path)
         parent_dir_name = os.path.basename(os.path.dirname(args.results_path))
-        # Prioritize parent dir name if it looks like a run ID (e.g., contains digits)
         if any(char.isdigit() for char in parent_dir_name) and parent_dir_name != 'results':
              run_id = parent_dir_name
         elif os.path.isdir(args.results_path):
-             run_id = path_part # Use directory name as fallback
+             run_id = path_part
         else:
              base_name = os.path.splitext(path_part)[0]
              if base_name.startswith("results_"):
                   run_id = base_name.split("_", 1)[1]
              elif "_" in base_name and any(char.isdigit() for char in base_name.split("_")[0]):
-                  run_id = base_name.split("_")[0] # Guess it's the first part if it looks like ID
+                  run_id = base_name.split("_")[0]
              else:
-                  run_id = base_name # Fallback
+                  run_id = base_name
         logger.info(f"Extracted run_id: {run_id}")
     except Exception as e:
         logger.warning(f"Could not automatically extract run_id from path '{args.results_path}': {e}")
 
+    # --- Assemble Final Output ---
     final_dashboard_output = {
         "run_id": run_id,
-        "meta_statistics": meta_stats, # Use calculated stats
-        "task_statistics": task_stats, # Add calculated task stats
-        "results_by_model": dict(results_by_model)
+        "meta_statistics": meta_stats,
+        "task_statistics": task_stats,
+        "complexity_analysis": complexity_analysis,
+        "results_by_model": dict(results_by_model_for_dashboard)
     }
-    # --- Restructure data for dashboard JS --- End ---
 
     # --- Save Dashboard Data ---
-    dashboard_json_path = "dashboard/dashboard_data.json"
+    dashboard_json_path = os.path.join(project_root, "dashboard", "dashboard_data.json")
     logger.info(f"Saving final structured dashboard data to: {dashboard_json_path}")
     save_dashboard_data(final_dashboard_output, dashboard_json_path)
 
     logger.info("Processing complete.")
+
 
 if __name__ == "__main__":
     # Argument parsing
     parser = argparse.ArgumentParser(description="Process CadEval results for dashboard and stats.")
     parser.add_argument("results_path", help="Path to the results JSON file or directory.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Set logging level.")
-    # Add other args if needed
 
     args = parser.parse_args()
 
-    # Setup basic logging
-    logging.basicConfig(level=args.log_level.upper(), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
+    # Call main execution logic
     main(args)

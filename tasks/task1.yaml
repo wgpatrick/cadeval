@@ -10,3 +10,4 @@ requirements:
   bounding_box: [11.4107, 10.7664, 5.0] # Updated dimensions
   topology_requirements: # Optional, but usually 1 for single parts
     expected_component_count: 1
+manual_operations: 2

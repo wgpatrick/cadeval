@@ -1,17 +1,18 @@
 task_id: "task21" # e.g., widget_01, bracket_complex_v2
-description: "This is a milled plate. It’s a fairly specific shape - I’ll tell you how to make it operation by operation. 
+description: "This is a milled plate. It's a fairly specific shape - I'll tell you how to make it operation by operation. 
 
 1. Start by creating a rectangular prism that is 45mm (X) x 60mm (Y) x 10mm (Z)
 
 2. Create 4 holes (cutting in the Z dimension) in the 4 corners of the plate. Each hole is 3mm in diameter. The center of each hole is 5mm from each edge. 
 
-3. Now we’re going to cut a pocket down 6mm into the plate. The pocket is rectangular in shape and is 22.5 mm (X) x 30 mm (Y). The rectangular pocket has 4 rounded corners of radius 5mm. 
+3. Now we're going to cut a pocket down 6mm into the plate. The pocket is rectangular in shape and is 22.5 mm (X) x 30 mm (Y). The rectangular pocket has 4 rounded corners of radius 5mm. 
 
-4. Now we’re going to cut a single slot from the outside of the plate to the rectangular pocket. The slot is 6mm (Y) wide, is parallel to the X axis, and is centered in the middle of the part in the Y axis. The slot is also 6mm deep and goes from the outside of the plate to the inner rectangular pocket. 
+4. Now we're going to cut a single slot from the outside of the plate to the rectangular pocket. The slot is 6mm (Y) wide, is parallel to the X axis, and is centered in the middle of the part in the Y axis. The slot is also 6mm deep and goes from the outside of the plate to the inner rectangular pocket. 
 
-5. Finally, we’ve cut a 15mm diameter hole through the center of the plate."
+5. Finally, we've cut a 15mm diameter hole through the center of the plate."
 reference_stl: "./reference/task21.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [45,60,10] # Target dimensions [Length, Width, Height] in mm, consistent order. Calculate from reference STL.
   topology_requirements: # Optional section
     expected_component_count: 1 # Usually 1 for single parts. Remove if not needed.
+manual_operations: 5
