@@ -191,6 +191,20 @@ The `scripts/geometry_check.py` script performs the following evaluations on suc
 
 ---
 
+## Current Limitations
+
+While this framework provides valuable insights, it's important to be aware of its current limitations:
+
+*   **Limited Task Coverage:** The current evaluation suite consists of 25 tasks. While designed to cover a range of simple operations, this number is insufficient to represent the full spectrum of CAD modeling challenges. The statistical power may be limited for detecting subtle performance differences, although it is sufficient to show larger differences.
+*   **Potential False Negatives (~<5%):**
+    *   **Alignment Failures:** The Iterative Closest Point (ICP) alignment step, which precedes Chamfer and Hausdorff distance calculations, can occasionally fail even for visually similar models. This leads to inaccurate distance metrics and subsequent check failures.
+    *   **Metric Sensitivity:** Sometimes, distance metrics (like Hausdorff) can be overly sensitive to minor outliers or mesh artifacts, resulting in a failed check even if the core geometry is correct.
+*   **Potential False Positives:** The current checks might not reliably detect the absence of small features like minor fillets or chamfers if their omission doesn't significantly impact the overall distance metrics or bounding box.
+
+These limitations highlight areas for future refinement in both the task suite and the checking methodology.
+
+---
+
 ## Evaluation Improvements / Future Work
 
 Potential areas for future development and improvement of this evaluation framework include:
