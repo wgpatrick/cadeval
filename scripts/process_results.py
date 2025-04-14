@@ -300,6 +300,10 @@ def process_data_for_dashboard(results: List[Dict[str, Any]], config: Config) ->
             "Model Name": entry.get("model_name", "N/A"), # ADD MODEL NAME
             "SCAD Gen": scad_gen_display_value, # Use new display value
             "Render OK": render_ok_display, # Use new display value
+            # --- Add File Paths for Visualize Command --- Start ---
+            "reference_stl_path": entry.get("reference_stl_path"),
+            "output_stl_path": entry.get("output_stl_path"),
+            # --- Add File Paths for Visualize Command --- End ---
             "Watertight": "Pass" if watertight_passed is True else "Fail" if watertight_passed is False else "N/A",
             "Single Comp": "Pass" if single_comp_passed is True else "Fail" if single_comp_passed is False else "N/A",
             "BBox Acc.": "Pass" if bbox_passed is True else "Fail" if bbox_passed is False else "N/A",

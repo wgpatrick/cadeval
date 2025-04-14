@@ -1,5 +1,7 @@
 let charts = {
     successRate: null,
+    renderSuccessRate: null,  // Moved up in the order
+    checksRunSuccessRate: null, // New chart for checks run success rate
     checksPassed: null,
     similarity: null,
     avgHausdorff: null,
@@ -71,7 +73,7 @@ function similarityCellRenderer(params) {
 
 
 // --- Chart Creation ---
-function renderSummaryCharts(metaStatistics, taskStatistics) {
+function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
     if (!metaStatistics || Object.keys(metaStatistics).length === 0) {
         console.warn("No metaStatistics provided for charts.");
         document.getElementById('charts-container').style.display = 'none'; // Hide chart container
@@ -109,52 +111,276 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
     // Get prompt keys from the first model
     const promptKeys = Object.keys(metaStatistics[modelNames[0]] || {}); 
 
+    // --- Determine reliable total_count per prompt --- START ---
+    const promptTotalCounts = {};
+    promptKeys.forEach(promptKey => {
+        let foundTotal = 0;
+        // 1. Try finding in meta_statistics first
+        for (const modelName of modelNames) {
+            const total = metaStatistics[modelName]?.[promptKey]?.total_count;
+            if (total !== null && total !== undefined && total > 0) {
+                foundTotal = total;
+                break; // Use the first valid non-zero total count found
+            }
+        }
+
+        // 2. Fallback: Infer from results_by_model if not found in meta_statistics
+        if (foundTotal === 0 && resultsByModel && modelNames.length > 0) { 
+            const firstModelName = modelNames[0];
+            const resultsForFirstModel = resultsByModel[firstModelName] || [];
+            // Filter results for the current prompt key (case-insensitive just in case)
+            const resultsForPrompt = resultsForFirstModel.filter(result => 
+                result.Prompt && result.Prompt.toLowerCase() === promptKey.toLowerCase()
+            );
+            foundTotal = resultsForPrompt.length; // Count the actual results for this prompt
+            if (foundTotal > 0) {
+                console.log(`Inferred total_count=${foundTotal} for prompt '${promptKey}' from results_by_model.`);
+            }
+        }
+
+        promptTotalCounts[promptKey] = foundTotal; // Store the determined total
+        if (foundTotal === 0) {
+            console.warn(`Could not determine reliable total_count > 0 for prompt '${promptKey}'. Tooltips might use 0 as denominator.`);
+        }
+    });
+    console.log("Determined Prompt Total Counts (with fallback):", promptTotalCounts);
+    // --- Determine reliable total_count per prompt --- END ---
+
     // Prepare datasets for each prompt key
     const datasets = {};
     promptKeys.forEach(promptKey => {
         datasets[promptKey] = {
             overallPassRate: [],
+            renderSuccessRate: [], // Moved up
+            checksRunSuccessRate: [], // New metric for checks run success rate
             chamferPassRate: [],
             avgChamfer: [],
             avgHausdorff95p: [],
             volumePassRate: [],
-            hausdorffPassRate: []
+            hausdorffPassRate: [],
+            modelIndices: [],
+            providers: []
             // Add other metrics if needed
         };
     });
 
     // Populate data for each model and prompt
-    modelNames.forEach(modelName => {
+    modelNames.forEach((modelName, modelIndex) => {
         promptKeys.forEach(promptKey => {
             const stats = metaStatistics[modelName]?.[promptKey]; // Safe access
+            let totalCount = stats?.total_count || 0; // Original total count from stats
+            let renderSuccessCount = stats?.render_success_count || 0;
+            let checksRunCount = stats?.checks_run_count || 0;
+            let overallPassCount = stats?.overall_pass_count || 0; // Get the overall pass count
+            
+            // Use the reliable total count determined earlier for chart 2 denominator
+            let reliableTotalCountForPrompt = promptTotalCounts[promptKey] || 0;
+
             datasets[promptKey].overallPassRate.push(stats?.overall_pass_rate ?? NaN);
+            
+            // --- Chart 2: STL Render Success Rate (%) --- START ---
+            let chart2SuccessCount = renderSuccessCount;
+            let chart2Value = stats?.render_success_rate ?? NaN;
+
+            // Special handling for zoo-ml-text-to-cad
+            if (modelName.includes('zoo-ml-text-to-cad')) {
+                // If render_success_count is 0 but checks_run_count > 0, use checks_run_count
+                if (chart2SuccessCount === 0 && checksRunCount > 0) {
+                    console.log(`Correcting renderSuccessCount for ${modelName} (${promptKey}) using checksRunCount (${checksRunCount})`);
+                    chart2SuccessCount = checksRunCount;
+                    // Recalculate rate if possible
+                    if (reliableTotalCountForPrompt > 0) {
+                        chart2Value = (chart2SuccessCount / reliableTotalCountForPrompt) * 100;
+                    } else {
+                        chart2Value = NaN; // Cannot calculate rate without a valid total
+                    }
+                }
+            }
+
+            datasets[promptKey].renderSuccessRate.push({
+                value: chart2Value,
+                successCount: chart2SuccessCount, // Use potentially corrected count
+                totalCount: reliableTotalCountForPrompt // Use the determined reliable count
+            });
+            // --- Chart 2: STL Render Success Rate (%) --- END ---
+            
+            // Chart 3: Success rate if STL rendered
+            let checksSuccessRate = NaN;
+            if (checksRunCount > 0) { // Calculate rate only if checks were run
+                checksSuccessRate = (overallPassCount / checksRunCount) * 100;
+            }
+
+            datasets[promptKey].checksRunSuccessRate.push({
+                value: checksSuccessRate,      // Rate based on checks run
+                overallPassCount: overallPassCount, // Numerator for tooltip
+                checksRunCount: checksRunCount    // Denominator for tooltip
+            });
+            
             datasets[promptKey].chamferPassRate.push(stats?.chamfer_pass_rate ?? NaN);
             datasets[promptKey].avgChamfer.push(stats?.avg_chamfer ?? NaN);
             datasets[promptKey].avgHausdorff95p.push(stats?.avg_hausdorff_95p ?? NaN);
             datasets[promptKey].volumePassRate.push(stats?.volume_pass_rate ?? NaN);
             datasets[promptKey].hausdorffPassRate.push(stats?.hausdorff_pass_rate ?? NaN);
+            datasets[promptKey].modelIndices.push(modelIndex);
+            datasets[promptKey].providers.push(modelName);
         });
     });
     
-    // Assign distinct colors to prompts (customize as needed)
-    const promptColors = [
-        'rgba(54, 162, 235, 0.6)',  // Blue
-        'rgba(255, 99, 132, 0.6)',  // Red
-        'rgba(75, 192, 192, 0.6)',  // Teal
-        'rgba(255, 206, 86, 0.6)',  // Yellow
-        'rgba(153, 102, 255, 0.6)' // Purple
-    ];
-    const promptBorderColors = promptColors.map(color => color.replace(', 0.6', ', 1'));
+    // Function to sort model data by overall pass rate
+    function sortModelDataBySuccessRate(promptKey) {
+        // Get the data for this prompt
+        const promptData = datasets[promptKey];
+        const { overallPassRate, modelIndices } = promptData;
+        
+        // Create pairs of [passRate, index] for sorting
+        const sortPairs = overallPassRate.map((rate, i) => [rate, i]);
+        
+        // Sort by pass rate (descending)
+        sortPairs.sort((a, b) => b[0] - a[0]);
+        
+        // Create a sorted version of each array in the dataset
+        const sortedDataset = {};
+        for (const key of Object.keys(promptData)) {
+            if (key !== 'modelIndices' && key !== 'providers') {
+                sortedDataset[key] = sortPairs.map(pair => promptData[key][pair[1]]);
+            }
+        }
+        
+        // Also sort providers and model indices
+        sortedDataset.modelIndices = sortPairs.map(pair => promptData.modelIndices[pair[1]]);
+        sortedDataset.providers = sortPairs.map(pair => promptData.providers[pair[1]]);
+        
+        return sortedDataset;
+    }
 
-    // Create Chart.js datasets
-    const createChartDatasets = (metricKey, labelPrefix) => {
-        return promptKeys.map((promptKey, index) => ({
+    // Function to create a special dataset for render success rate with detailed tooltips
+    function createRenderSuccessRateDataset(promptKey, labelPrefix) {
+        // Get the sorted data
+        const sortedData = sortModelDataBySuccessRate(promptKey);
+        
+        return {
             label: `${labelPrefix} (${promptKey})`,
-            data: datasets[promptKey][metricKey],
-            backgroundColor: promptColors[index % promptColors.length],
-            borderColor: promptBorderColors[index % promptColors.length],
-            borderWidth: 1
-        }));
+            // Extract the 'value' property from each object for display
+            data: sortedData.renderSuccessRate.map(item => typeof item === 'object' ? item.value : item),
+            backgroundColor: sortedData.providers.map(provider => {
+                const key = getProvider(provider);
+                return providerColors[key] || defaultColors[0];
+            }),
+            borderColor: sortedData.providers.map(provider => {
+                const key = getProvider(provider);
+                const color = providerColors[key] || defaultColors[0];
+                return color.replace(', 0.6', ', 1');
+            }),
+            borderWidth: 1,
+            // Store the complete objects for tooltip access
+            _renderData: sortedData.renderSuccessRate,
+            // Store original model indices for correct label mapping
+            originalIndices: sortedData.modelIndices
+        };
+    }
+
+    // Function to create the dataset for checks run success rate with detailed tooltips
+    function createChecksRunSuccessRateDataset(promptKey, labelPrefix) {
+        // Get the sorted data
+        const sortedData = sortModelDataBySuccessRate(promptKey);
+        
+        return {
+            label: `${labelPrefix} (${promptKey})`,
+            // Extract the 'value' property from each object for display
+            data: sortedData.checksRunSuccessRate.map(item => typeof item === 'object' ? item.value : item),
+            backgroundColor: sortedData.providers.map(provider => {
+                const key = getProvider(provider);
+                return providerColors[key] || defaultColors[0];
+            }),
+            borderColor: sortedData.providers.map(provider => {
+                const key = getProvider(provider);
+                const color = providerColors[key] || defaultColors[0];
+                return color.replace(', 0.6', ', 1');
+            }),
+            borderWidth: 1,
+            // Store the complete objects for tooltip access
+            _checksRunData: sortedData.checksRunSuccessRate,
+            // Store original model indices for correct label mapping
+            originalIndices: sortedData.modelIndices
+        };
+    }
+
+    // Define provider-specific colors
+    const providerColors = {
+        'claude': 'rgba(54, 162, 235, 0.6)',   // Blue
+        'gemini': 'rgba(255, 99, 132, 0.6)',   // Red
+        'openai': 'rgba(75, 192, 192, 0.6)',   // Teal - All OpenAI models
+        'gpt': 'rgba(75, 192, 192, 0.6)',      // Teal - OpenAI (fallback)
+        'zoo': 'rgba(255, 206, 86, 0.6)',      // Yellow
+        'chatgpt': 'rgba(75, 192, 192, 0.6)',  // Teal - OpenAI (fallback)
+        'o1': 'rgba(75, 192, 192, 0.6)',       // Teal - OpenAI (fallback)
+        'o3': 'rgba(75, 192, 192, 0.6)'        // Teal - OpenAI (fallback)
+    };
+
+    // Default colors for unknown providers
+    const defaultColors = [
+        'rgba(153, 102, 255, 0.6)', // Purple
+        'rgba(255, 159, 64, 0.6)',  // Orange
+        'rgba(201, 203, 207, 0.6)', // Gray
+        'rgba(255, 99, 132, 0.6)',  // Pink
+        'rgba(0, 204, 150, 0.6)'    // Green
+    ];
+
+    // Extract provider from model name with special handling for OpenAI models
+    function getProvider(modelName) {
+        // Convert to lowercase for case-insensitive matching
+        const modelLower = modelName.toLowerCase();
+        
+        // Check for Claude models
+        if (modelLower.includes('claude')) {
+            return 'claude';
+        }
+        
+        // Check for OpenAI models with various prefixes
+        if (modelLower.startsWith('gpt') || 
+            modelLower.startsWith('chatgpt') || 
+            modelLower.startsWith('o1') || 
+            modelLower.startsWith('o3')) {
+            return 'openai';
+        }
+        
+        // Check for Gemini models
+        if (modelLower.includes('gemini')) {
+            return 'gemini';
+        }
+        
+        // Check for Zoo models
+        if (modelLower.includes('zoo')) {
+            return 'zoo';
+        }
+        
+        // Default: just use the first part before hyphen
+        return modelLower.split('-')[0];
+    }
+
+    // Create Chart.js datasets with sorting and provider-based coloring
+    const createChartDatasets = (metricKey, labelPrefix) => {
+        return promptKeys.map((promptKey, index) => {
+            // Sort data for this prompt by success rate
+            const sortedData = sortModelDataBySuccessRate(promptKey);
+            
+            return {
+                label: `${labelPrefix} (${promptKey})`,
+                data: sortedData[metricKey],
+                backgroundColor: sortedData.providers.map(provider => {
+                    const key = getProvider(provider);
+                    return providerColors[key] || defaultColors[index % defaultColors.length];
+                }),
+                borderColor: sortedData.providers.map(provider => {
+                    const key = getProvider(provider);
+                    const color = providerColors[key] || defaultColors[index % defaultColors.length];
+                    return color.replace(', 0.6', ', 1');
+                }),
+                borderWidth: 1,
+                // Store original model indices for correct label mapping
+                originalIndices: sortedData.modelIndices
+            };
+        });
     };
     // --- Data Preparation for Grouped Bars --- END ---
 
@@ -171,6 +397,7 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
         },
         maintainAspectRatio: false,
         plugins: {
+             legend: { display: false }, // Hide legend
              tooltip: {
                  callbacks: {
                     label: function(context) {
@@ -208,6 +435,12 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
      // Removed percentDiffChartOptions as chart is skipped
 
 
+    // --- Chart Creation with Sorted Models ---
+    // Helper function to get sorted model labels based on dataset's original indices
+    function getSortedLabels(dataset, allModelNames) {
+        return dataset.originalIndices.map(index => allModelNames[index]);
+    }
+
     // 1. Overall Success Rate Chart
     const successCtx = document.getElementById('successRateChart').getContext('2d');
     // --- >>> DEBUGGING START <<< ---
@@ -217,70 +450,166 @@ function renderSummaryCharts(metaStatistics, taskStatistics) {
     charts.successRate = new Chart(successCtx, {
         type: 'bar',
         data: {
-            labels: modelNames,
+            // Use the sorted labels based on the first dataset
+            labels: getSortedLabels(overallPassRateDatasets[0], modelNames),
             datasets: overallPassRateDatasets // Use the logged variable
         },
         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Overall Pass Rate (%) by Model & Prompt' }}}
     });
 
-    // 2. Chamfer Pass Rate Chart
+    // 2. Render Success Rate Chart (moved up in order)
+    const renderSuccessCtx = document.getElementById('renderSuccessRateChart').getContext('2d');
+    const renderSuccessRateDatasets = promptKeys.map(promptKey => 
+        createRenderSuccessRateDataset(promptKey, 'Render Success Rate')
+    );
+
+    charts.renderSuccessRate = new Chart(renderSuccessCtx, {
+        type: 'bar',
+        data: {
+            labels: getSortedLabels(renderSuccessRateDatasets[0], modelNames),
+            datasets: renderSuccessRateDatasets
+        },
+        options: { 
+            ...rateChartOptions, 
+            plugins: {
+                ...rateChartOptions.plugins, 
+                title: { display: true, text: 'STL Render Success Rate (%)' },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const dataset = context.dataset;
+                            const index = context.dataIndex;
+                            const renderData = dataset._renderData && dataset._renderData[index];
+                            let label = dataset.label || '';
+                            if (label) label += ': ';
+                            
+                            if (renderData && typeof renderData === 'object') {
+                                const rate = !isNaN(renderData.value) ? renderData.value.toFixed(1) + '%' : 'N/A';
+                                const successCount = renderData.successCount || 0;
+                                const totalCount = renderData.totalCount || 0;
+                                // Use the reliable counts from the data for the tooltip
+                                const countInfo = `${successCount}/${totalCount} generated`; 
+                                label += `${rate} (${countInfo})`;
+                            } else {
+                                const value = typeof context.parsed.y !== 'undefined' ? context.parsed.y : NaN;
+                                label += !isNaN(value) ? value.toFixed(1) + '%' : 'N/A';
+                            }
+                            return label;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // 3. Success rate if STL rendered Chart
+    const checksRunSuccessCtx = document.getElementById('checksRunSuccessRateChart').getContext('2d');
+    const checksRunSuccessRateDatasets = promptKeys.map(promptKey => 
+        createChecksRunSuccessRateDataset(promptKey, 'Checks Success') // Updated label prefix
+    );
+
+    charts.checksRunSuccessRate = new Chart(checksRunSuccessCtx, {
+        type: 'bar',
+        data: {
+            labels: getSortedLabels(checksRunSuccessRateDatasets[0], modelNames),
+            datasets: checksRunSuccessRateDatasets
+        },
+        options: { 
+            ...rateChartOptions, 
+            plugins: { 
+                ...rateChartOptions.plugins, 
+                title: { display: true, text: 'Success rate if STL rendered' }, // Updated title
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const dataset = context.dataset;
+                            const index = context.dataIndex;
+                            const checksRunData = dataset._checksRunData && dataset._checksRunData[index];
+                            let label = dataset.label || '';
+                            if (label) label += ': ';
+                            
+                            if (checksRunData && typeof checksRunData === 'object') {
+                                const rate = !isNaN(checksRunData.value) ? checksRunData.value.toFixed(1) + '%' : 'N/A';
+                                const overallPassCount = checksRunData.overallPassCount || 0;
+                                const checksRunCount = checksRunData.checksRunCount || 0;
+                                // Updated tooltip text
+                                const countInfo = `${overallPassCount}/${checksRunCount} checks passed`; 
+                                label += `${rate} (${countInfo})`;
+                            } else {
+                                const value = typeof context.parsed.y !== 'undefined' ? context.parsed.y : NaN;
+                                label += !isNaN(value) ? value.toFixed(1) + '%' : 'N/A';
+                            }
+                            return label;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // 4. Chamfer Pass Rate Chart
     const checksCtx = document.getElementById('checksPassedChart').getContext('2d');
+    const chamferPassRateDatasets = createChartDatasets('chamferPassRate', 'Chamfer Pass Rate');
     charts.checksPassed = new Chart(checksCtx, {
         type: 'bar',
         data: {
-            labels: modelNames,
-            datasets: createChartDatasets('chamferPassRate', 'Chamfer Pass Rate')
+            labels: getSortedLabels(chamferPassRateDatasets[0], modelNames),
+            datasets: chamferPassRateDatasets
         },
         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Chamfer Pass Rate (% Rel. to Checks Run)' }}}
     });
 
-    // 3. Average Chamfer Distance Chart
+    // 5. Average Chamfer Distance Chart
     const chamferCtx = document.getElementById('avgSimilarityChart').getContext('2d');
+    const avgChamferDatasets = createChartDatasets('avgChamfer', 'Avg Chamfer (mm)');
     charts.similarity = new Chart(chamferCtx, {
         type: 'bar',
         data: {
-            labels: modelNames,
-            datasets: createChartDatasets('avgChamfer', 'Avg Chamfer (mm)')
+            labels: getSortedLabels(avgChamferDatasets[0], modelNames),
+            datasets: avgChamferDatasets
         },
         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Chamfer Distance (mm, Lower is Better)' }}}
     });
 
-    // 4. Average Hausdorff 95p Distance Chart
+    // 6. Average Hausdorff 95p Distance Chart
     const hausdorffCtx = document.getElementById('avgHausdorffChart').getContext('2d');
+    const avgHausdorffDatasets = createChartDatasets('avgHausdorff95p', 'Avg Haus. 95p (mm)');
     charts.avgHausdorff = new Chart(hausdorffCtx, {
         type: 'bar',
         data: {
-            labels: modelNames,
-            datasets: createChartDatasets('avgHausdorff95p', 'Avg Haus. 95p (mm)')
+            labels: getSortedLabels(avgHausdorffDatasets[0], modelNames),
+            datasets: avgHausdorffDatasets
         },
         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Hausdorff 95p Distance (mm, Lower is Better)' }}}
     });
 
-    // 5. Skipping Volume Diff Chart (Canvas ID: avgVolumeDiffChart)
+    // 7. Skipping Volume Diff Chart (Canvas ID: avgVolumeDiffChart)
     // We can hide this canvas or reuse it later if needed.
     const avgVolumeDiffCanvas = document.getElementById('avgVolumeDiffChart');
     if (avgVolumeDiffCanvas && avgVolumeDiffCanvas.parentElement) {
          avgVolumeDiffCanvas.parentElement.style.display = 'none'; // Hide the wrapper div
     }
 
-    // 6. Volume Pass Rate Chart
+    // 8. Volume Pass Rate Chart
     const volumePassCtx = document.getElementById('volumePassRateChart').getContext('2d');
+    const volumePassRateDatasets = createChartDatasets('volumePassRate', 'Volume Pass Rate');
     charts.volumePassRate = new Chart(volumePassCtx, {
         type: 'bar',
         data: {
-            labels: modelNames,
-            datasets: createChartDatasets('volumePassRate', 'Volume Pass Rate')
+            labels: getSortedLabels(volumePassRateDatasets[0], modelNames),
+            datasets: volumePassRateDatasets
         },
         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Volume Pass Rate (% Rel. to Checks Run)' }}}
     });
 
-    // 7. Hausdorff Pass Rate Chart
+    // 9. Hausdorff Pass Rate Chart
     const hausdorffPassCtx = document.getElementById('hausdorffPassRateChart').getContext('2d');
+    const hausdorffPassRateDatasets = createChartDatasets('hausdorffPassRate', 'Hausdorff Pass Rate');
     charts.hausdorffPassRate = new Chart(hausdorffPassCtx, {
         type: 'bar',
         data: {
-            labels: modelNames,
-            datasets: createChartDatasets('hausdorffPassRate', 'Hausdorff Pass Rate')
+            labels: getSortedLabels(hausdorffPassRateDatasets[0], modelNames),
+            datasets: hausdorffPassRateDatasets
         },
         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Hausdorff Pass Rate (% Rel. to Checks Run)' }}}
     });
@@ -559,13 +888,44 @@ function createModelHtmlTable(modelName, modelResults, container) {
             // OR remove the visualize button from the dashboard table.
             // For now, let's just make it N/A.
             if (col.key === 'Visualize Cmd') {
-                // const refPath = result.ref_stl_path; // Not available in result object
-                // const genPath = result.stl_path; // Not available in result object
-                displayValue = 'N/A';
-                cell.textContent = displayValue;
-                cell.title = 'Visualize command generation requires raw result paths (not included in dashboard_data.json).';
-                cell.style.fontStyle = "italic";
-                cell.style.color = "#888";
+                const refPath = result.reference_stl_path; // Get the relative reference path
+                const genPath = result.output_stl_path;   // Get the relative generated path
+                // Get other details for the title
+                const taskId = result['Task ID'];
+                const repId = result['Rep ID'];
+                const modelName = result['Model Name'];
+
+                if (refPath && genPath && taskId && repId && modelName) {
+                    // Construct the title string
+                    const title = `Viz: ${taskId}-${modelName}-Rep${repId} (Ref=Green, Gen=Red)`;
+                    // Construct the command string with flags and quoted paths
+                    displayValue = `python scripts/visualize_comparison.py --ref "${refPath}" --gen "${genPath}" --title "${title}"`;
+                    cell.textContent = displayValue;
+                    cell.style.fontFamily = 'monospace'; // Use monospace for commands
+                    cell.style.cursor = 'pointer';    // Indicate it's clickable
+                    cell.title = 'Click to copy command'; // Tooltip
+                    // Add click-to-copy functionality
+                    cell.addEventListener('click', () => {
+                        navigator.clipboard.writeText(displayValue)
+                            .then(() => {
+                                // Optional: Briefly indicate success (e.g., change text)
+                                const originalText = cell.textContent;
+                                cell.textContent = 'Copied!';
+                                setTimeout(() => { cell.textContent = originalText; }, 1000);
+                            })
+                            .catch(err => {
+                                console.error('Failed to copy command: ', err);
+                                alert('Failed to copy command to clipboard.');
+                            });
+                    });
+                } else {
+                    // If paths are missing, show N/A
+                    displayValue = 'N/A';
+                    cell.textContent = displayValue;
+                    cell.title = 'Visualize command generation requires STL paths.';
+                    cell.style.fontStyle = "italic";
+                    cell.style.color = "#888";
+                }
             }
             // Handle Hausdorff combined display (key is correct now)
             else if (col.key === 'Hausdorff Dist (95p / 99p mm)') {
@@ -683,8 +1043,8 @@ async function initializeDashboard() {
         // Render Summary Tables using meta_statistics and task_statistics
         renderSummaryTables(data.meta_statistics || {}, data.task_statistics || {});
 
-        // Render Charts using meta_statistics AND task_statistics
-        renderSummaryCharts(data.meta_statistics || {}, data.task_statistics || {}); // Pass both stats objects
+        // Render Charts using meta_statistics, task_statistics, AND results_by_model
+        renderSummaryCharts(data.meta_statistics || {}, data.task_statistics || {}, data.results_by_model || {}); // Pass results_by_model
 
         // --- Render Complexity Chart --- Start ---
         const complexityAnalysis = data.complexity_analysis; // Get the new data section

@@ -1,337 +1,209 @@
-# Single-Part Text-to-CAD Evaluation Plan
+# CadEval: Text-to-CAD Evaluation Framework
 
-This document outlines a **streamlined approach** for evaluating how well an LLM (via Cursor) can generate valid mechanical parts in OpenSCAD from **textual descriptions**. The plan focuses on single-part scenarios only. Future expansions can include part modifications and image-to-sketch tasks later.
-
----
-
-## 1. Goal & Scope
-
-- **Goal**: Assess how reliably and accurately the LLM can produce OpenSCAD files for **single mechanical parts** from textual prompts.  
-- **Scope**:  
-  - Single-part geometry only (no assemblies).  
-  - Strictly text-based instructions (no sketches or images yet).  
-  - Mechanical features such as holes, extrusions, rectangular/cylindrical profiles, etc.
+This repository contains a framework for evaluating the capability of Large Language Models (LLMs) to generate 3D models (specifically OpenSCAD code or direct STL files) from textual descriptions.
 
 ---
 
-## 2. Outline of Steps
+## Goal & Scope
 
-1. **Create an Initial Evaluation Set (~10 Tasks)**  
-2. **Automate the Code Generation (Cursor) & OpenSCAD Rendering**  
-3. **Run Basic Geometry Checks**  
-4. **Collect & Compare Results**
+- **Goal**: Assess the reliability and geometric accuracy of various LLMs in producing single, simple mechanical parts based on text prompts, including analysis based on task complexity.
+- **Scope**:
+  - Focus on single-part generation.
+  - Input is primarily text descriptions defined in task files.
+  - Evaluation involves automated generation, rendering (where applicable), geometric checks against reference models, and visualization of results via a dashboard.
+  - Supports standard LLMs (via API like OpenAI, Anthropic, Google) and specialized models like Zoo ML's Text-to-CAD (via CLI).
 
 ---
 
-## 3. Constructing the Evaluation Set
+## Workflow Overview
 
-1. **Number of Tasks**  
-   - Start with about **10 tasks** defined by the user, potentially leveraging standard benchmarks like the Purdue Engineering Shape Benchmark (ESB) for realistic mechanical parts of varying complexity.
-   - Keep the initial set small for rapid iteration.
+The evaluation process follows these steps:
 
-2. **Task Format & Reference Models**
-   - Each task is stored in a structured file (YAML/JSON).
-   - **Reference Model:** For tasks based on benchmarks like ESB, the provided benchmark STL file will serve directly as the `reference_stl`. For custom tasks, the reference STL must be carefully created and validated.
-   - **YAML Requirements Structure (Simplified):** The YAML file will contain:
-     - `task_id`: A unique identifier (e.g., "esb_bracket_01").
-     - `description`: The textual prompt for the LLM.
-     - `reference_stl`: Path to the ground truth STL file.
-     - `requirements`: Focused on essential, easily verifiable properties:
-       - `bounding_box`: Target dimensions [L, W, H].
-       - *(Optional)* `topology_requirements`: e.g., `expected_component_count: 1`.
-       - *(Avoid complex feature lists like hole counts/positions initially; rely on Check 5 for detailed geometric fidelity).*
+1.  **Configuration (`config.yaml`)**: Defines models to test, API keys (sourced from `.env`), prompt templates, directories, geometry check thresholds, and evaluation parameters (e.g., number of replicates per task).
+2.  **Task Definition (`tasks/*.yaml`)**: Each task YAML file specifies:
+    *   `task_id`: Unique identifier.
+    *   `description`: The text prompt for the LLM.
+    *   `reference_stl`: Path to the corresponding ground truth STL model in `reference/`.
+    *   `manual_operations` (Optional): An integer indicating the complexity of the task, used for complexity analysis.
+    *   `requirements` (Optional): Can include `bounding_box` or `topology_requirements`.
+3.  **Execution (`scripts/run_evaluation.py`)**: This is the main script that orchestrates the evaluation:
+    *   Loads configuration (`config.yaml`) and selected tasks (`tasks/`).
+    *   Iterates through specified models (from `config.yaml`), prompts (from `config.yaml`), and the requested number of replicates.
+    *   **For standard LLMs:** Calls `scripts/generate_scad.py` to interact with LLM APIs, saving generated `.scad` files to `results/{run_id}/scad/`.
+    *   **For `zoo_cli`:** Calls the `zoo ml text-to-cad export` command directly, saving the output `.stl` to `results/{run_id}/stl/`.
+    *   **Rendering:** For successfully generated `.scad` files, calls OpenSCAD via `scripts/render_scad.py` to render them into `.stl` files in `results/{run_id}/stl/`.
+    *   **Geometry Checks:** For all successfully generated/rendered `.stl` files, calls `scripts/geometry_check.py` to perform checks against the reference STL.
+    *   Aggregates raw results (generation status, render status, check results, metrics) for each attempt into `results/{run_id}/results_{run_id}.json`. Also creates a log file `results/{run_id}/run_{run_id}.log`.
+4.  **Post-Processing (`scripts/process_results.py`)**:
+    *   Reads the raw `results_{run_id}.json` file from a specified run.
+    *   Calculates summary statistics (`meta_statistics` grouped by model/prompt, `task_statistics` grouped by task).
+    *   Calculates complexity analysis based on `manual_operations` from task YAMLs.
+    *   Formats the processed data and statistics into `dashboard/dashboard_data.json`.
+5.  **Dashboard (`dashboard/`)**:
+    *   A web-based dashboard (`dashboard.html`, `dashboard.js`, `dashboard.css`) reads `dashboard_data.json`.
+    *   Displays interactive charts (using Chart.js) and tables visualizing model performance across various metrics.
 
-### Example (YAML - Revised):
+---
 
-```yaml
-task_id: "rect_plate_4holes_simple"
-description: "Create a rectangular plate 100 mm long, 50 mm wide, and 5 mm thick. Place four 10 mm diameter through-holes, centered 10mm from each edge at the corners."
-reference_stl: "./reference/rect_plate_4holes_simple.stl" # Assumes this file exists and is correct
-requirements:
-  bounding_box: [100, 50, 5]
-  topology_requirements:
-    expected_component_count: 1 # This implies no floating parts
+## Project Structure
+
+```
+CadEval/
+├── config.yaml             # Main configuration file
+├── environment.yml           # Conda environment definition (or requirements.txt)
+├── requirements.txt        # pip requirements file (optional if using conda)
+├── requirements-dev.txt    # Optional dev dependencies
+├── .env                    # API Keys and environment variables (add to .gitignore!)
+├── .gitignore              # Specifies intentionally untracked files
+├── README.md               # This file
+├── tasks/                  # Task definition YAML files
+│   └── *.yaml
+├── reference/              # Reference/ground truth STL models
+│   └── *.stl
+├── scripts/                # Core Python scripts
+│   ├── run_evaluation.py     # Main orchestration script
+│   ├── process_results.py    # Post-processing for dashboard
+│   ├── geometry_check.py     # Performs geometric comparisons
+│   ├── render_scad.py        # Handles OpenSCAD rendering
+│   ├── generate_scad.py      # Handles LLM API calls for SCAD generation
+│   ├── task_loader.py        # Loads task definitions
+│   ├── config_loader.py      # Loads config.yaml
+│   └── logger_setup.py       # Configures logging
+├── results/                # Output directory for evaluation runs
+│   └── {run_id}/             # Each run gets its own directory
+│       ├── results_{run_id}.json # Raw detailed results for the run
+│       ├── run_{run_id}.log      # Log file for the run
+│       ├── scad/                 # Generated .scad files (for non-Zoo models)
+│       │   └── *.scad
+│       └── stl/                  # Generated/rendered .stl files
+│           └── *.stl
+├── dashboard/              # Web dashboard files
+│   ├── dashboard.html
+│   ├── dashboard.js
+│   ├── dashboard.css
+│   └── dashboard_data.json   # Processed data consumed by the dashboard
+└── # Other files/dirs (.git, .pytest_cache, tests/, etc.)
 ```
 
-**Field Definitions:**
-
-*   `task_id` (string, required): A unique identifier for the task (e.g., `snake_case_description`). Used for naming output files.
-*   `description` (string, required): The natural language prompt provided to the LLM to generate the OpenSCAD model.
-*   `reference_stl` (string, required): The relative path (from the project root) to the ground truth `.stl` file located in the `reference/` directory. This file is used for comparison during the geometry checks.
-*   `requirements` (object, required): A dictionary containing specific criteria for evaluating the generated model.
-    *   `bounding_box` (list of 3 numbers, required): The target dimensions `[Length, Width, Height]` in millimeters (mm) that the final model's bounding box should match, within a defined tolerance (see `config.yaml`). The order should be consistent.
-    *   `topology_requirements` (object, optional): Specifies requirements related to the model's structure.
-        *   `expected_component_count` (integer, optional): The number of distinct, unconnected solid bodies expected in the final model. For single-part designs, this should typically be `1`. If omitted, this specific check might be skipped or default to assuming 1.
-
 ---
 
-## 4. Automating the Code Generation & Rendering
+## Setup
 
-### 4.1 Generating OpenSCAD (Direct LLM API Calls)
-
-**Approach:**
-
-- A Python script iterates over each task defined in the `tasks/` directory.
-- For each task, the script iterates through a list of target Large Language Models (LLMs) specified in the `config.yaml` under the `llm.models` key. Each entry in this list defines the model's `name`, `provider`, and specific parameters like `temperature` and `max_tokens`.
-- The script formats the task `description` into the appropriate API request format for the current LLM provider.
-- It uses official Python client libraries (e.g., `openai`, `anthropic`, `google-generativeai`) to send the request to the respective LLM API endpoint.
-- The LLMs targeted for evaluation (as configured in `config.yaml`) typically include:
-    - OpenAI: `gpt-4o-mini` (or similar small/efficient model)
-    - Anthropic: `claude-3-5-sonnet-20240620`
-    - Google: `gemini-1.5-pro-latest`
-- The script saves the returned OpenSCAD code into a structured output directory, likely including the model name in the filename (e.g., `./generated_outputs/{task_id}_{model_name}.scad`).
-
-**Authentication:**
-- API keys for OpenAI, Anthropic, and Google Cloud will be read from environment variables (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). The script will expect these to be set in its execution environment.
-
-**API Error Handling:**
-- The script should implement basic error handling for API calls (e.g., network issues, rate limits, invalid responses) and log these failures appropriately. Retry logic may be considered for transient errors.
-
-### 4.2 Rendering SCAD to STL (Headless Mode) - Detailed Plan (Revised)
-
-**Purpose:** This step converts the generated `.scad` files into `.stl` mesh files using OpenSCAD's command-line interface and captures rendering metadata. These outputs are crucial for subsequent geometry checking and analysis.
-
-**Inputs:**
-1.  A list of paths to the generated `.scad` files (e.g., `./generated_outputs/{task_id}_{model_name}.scad`).
-2.  The corresponding base output path for each task/model combination (e.g., `./generated_outputs/{task_id}_{model_name}`).
-
-**Core Process:**
-1.  **Iteration:** Loop through each input `.scad` file path.
-2.  **Define Output Paths:** For each input, define the target paths for both the `.stl` file and the `.json` summary file (e.g., `output_base + ".stl"` and `output_base + ".json"`).
-3.  **Command Construction:** Construct the OpenSCAD command-line arguments. Aim for a command like:
+1.  **Clone the Repository:**
     ```bash
-    openscad -q \
-             --export-format asciistl \
-             --backend Manifold \
-             --summary all \
-             --summary-file <output_json_path> \
-             -o <output_stl_path> \
-             <input_scad_path>
+    git clone <repository-url>
+    cd CadEval
     ```
-    *   `-q`: Quiet mode (suppresses info messages, shows errors).
-    *   `--export-format asciistl`: Explicitly requests ASCII STL format for consistency (can be made configurable if binary is preferred).
-    *   `--backend Manifold`: Use the faster backend (consider making optional or checking version).
-    *   `--summary all`: Request all available summary information.
-    *   `--summary-file <path>`: Specify the output file for the JSON summary.
-    *   `-o <path>`: Specify the output STL file.
-    *   `<input>`: The input SCAD file.
-4.  **Execution:** Execute the command using `subprocess.run` or similar in Python.
-5.  **Timeout Handling:** Implement and enforce a timeout (e.g., 60-120 seconds). Terminate the process if it exceeds the timeout.
-6.  **Process Monitoring:** Capture `stdout`, `stderr`, and the process `returncode`. A non-zero `returncode` or non-empty `stderr` (even with `-q`) usually indicates an error.
 
-**Outputs:**
-1.  `.stl` files for successfully rendered models, saved to the specified output directory.
-2.  `.json` summary files for successfully rendered models (if using a compatible OpenSCAD version), containing metadata like render time, geometry details, and bounding box.
-3.  Status information for each rendering attempt (success, failure type, duration, path to STL, path to JSON).
+2.  **Create Environment using Conda:**
+    ```bash
+    conda env create -f environment.yml
+    conda activate cadeval
+    ```
 
-**Dependencies:**
-1.  **OpenSCAD Installation:** A working installation is required.
-2.  **Version Requirement:** Target OpenSCAD **2021.01+**. Script should check version.
-3.  **Path Configuration:** The path to the OpenSCAD executable will be read from a configuration file (e.g., `config.yaml` or `config.ini`). The script will fail if the config file or path is invalid.
+3.  **Install OpenSCAD:** Download and install OpenSCAD (version 2021.01 or later recommended) from [openscad.org](https://openscad.org/). Ensure it's added to your system's PATH or update the `openscad.executable_path` in `config.yaml` accordingly.
 
-**Error Handling & Reporting:**
-Expand the previous list:
-1.  OpenSCAD Not Found.
-2.  SCAD File Not Found.
-3.  **OpenSCAD Version Too Old:** If the version check fails the minimum requirement for summary files. -> *Report: "OpenSCAD version too old, summary file requires X.Y+"* (Potentially proceed without summary generation).
-4.  OpenSCAD Compile Error (non-zero return code or stderr output). -> *Report: "OpenSCAD failed..." (Include stderr).*
-5.  Timeout. -> *Report: "Rendering timed out."*
-6.  **Summary File Not Created:** If OpenSCAD succeeded (return code 0) but the expected JSON file is missing. -> *Report: "Summary file generation failed."*
-7.  Permissions Issues.
+4.  **Install ZooML CLI (Optional):** If evaluating the `zoo-ml-text-to-cad` model, follow the installation instructions for the Zoo command-line tools.
 
-**Configuration:**
-- A configuration file (e.g., `config.yaml`) will specify defaults/settings:
-    - `openscad_executable_path`: Path to binary.
-    - `render_timeout_seconds`: e.g., `120`.
-    - `output_directory`: e.g., `./generated_outputs/`.
-    - `minimum_openscad_version`: e.g., `"2021.01"`.
-    - `export_format`: e.g., `asciistl`.
-    - `openscad_backend`: e.g., `Manifold`.
-    - `summary_options`: e.g., `all`.
+5.  **Configure API Keys:**
+    *   Create a file named `.env` in the project root directory (if it doesn't exist).
+    *   Add your API keys like this:
+        ```dotenv
+        OPENAI_API_KEY=your_openai_key
+        ANTHROPIC_API_KEY=your_anthropic_key
+        GOOGLE_API_KEY=your_google_key
+        # Add other keys if needed
+        ```
+    *   **Important:** Ensure `.env` is listed in your `.gitignore` file to avoid committing secrets.
 
-**Logging:**
-Update logging to include:
--   OpenSCAD version detected.
--   Full command executed.
--   Status (including summary file success/failure).
--   Path to generated summary JSON (if successful).
-
-**Integration with Step 5:** Explicitly note that the generated JSON summary file should be passed as an input to the geometry checking step (Step 5), as it likely contains pre-calculated bounding box information and other useful geometry stats, potentially satisfying some checks directly.
+6.  **Review `config.yaml`:**
+    *   Verify the `openscad.executable_path`.
+    *   Add/remove/modify LLM models under `llm.models`. Ensure providers match the API clients used in `scripts/generate_scad.py`.
+    *   Adjust prompt templates under `prompts` if desired.
+    *   Review geometry check thresholds under `geometry_check`.
+    *   Set the desired `evaluation.num_replicates`.
 
 ---
 
-## 5. Automated Geometry Checks (Revised based on Research)
+## Usage
 
-**Purpose:** To automatically assess the geometric fidelity and topological soundness of the generated STL file against the reference STL and task requirements, producing binary pass/fail results for each check performed.
+1.  **Activate Environment:**
+    ```bash
+    conda activate cadeval
+    ```
 
-**Inputs:**
-1.  Generated STL Path (`./generated_outputs/{task_id}_{model_name}.stl`).
-2.  Reference STL Path (`./reference/{task_id}.stl`).
-3.  Task Requirements (from YAML, primarily for Check 3).
-4.  Rendering Status (from Step 4.2).
-5.  Configuration (`config.yaml` for tolerances).
+2.  **Run Evaluation:** Execute the main orchestration script from the project root directory.
+    *   **Run all tasks, models, and the 'default' prompt defined in `config.yaml`:**
+        ```bash
+        python scripts/run_evaluation.py
+        ```
+    *   **Specify tasks, models, prompts, or run ID:**
+        ```bash
+        # Run only specific tasks
+        python scripts/run_evaluation.py --tasks task_id_1 task_id_2
 
-**Core Checks (Implemented in `geometry_check.py` using `Trimesh`, `Open3D`):**
+        # Run only specific models (names must match config.yaml)
+        python scripts/run_evaluation.py --models gpt-4o-mini claude-3-5-sonnet-20240620
 
-1.  **Check 1: Render Success**
-    *   **Input:** Rendering status from Step 4.2.
-    *   **Logic:** Did the OpenSCAD rendering complete successfully?
-    *   **Output:** `render_successful: true/false`
+        # Run using specific prompt template keys (from config.yaml)
+        python scripts/run_evaluation.py --prompts concise default
 
-2.  **Check 2: Topological Integrity - Watertight**
-    *   **Input:** Generated STL Path.
-    *   **Logic:** Load mesh (`Open3D` or `Trimesh`). Check if mesh is watertight/manifold. *Prerequisite: Render Success.*
-    *   **Output:** `is_watertight: true/false/null`
+        # Assign a custom run ID
+        python scripts/run_evaluation.py --run-id my_test_run_01
 
-3.  **Check 3: Topological Integrity - Single Component**
-    *   **Input:** Generated STL Path, Task Requirements (`topology_requirements`).
-    *   **Logic:** Load mesh (`Open3D` or `Trimesh`). Count connected components. Compare to `expected_component_count` (default 1) if specified. *Prerequisite: Render Success.*
-    *   **Output:** `is_single_component: true/false/null`
+        # Combine options
+        python scripts/run_evaluation.py --tasks task_id_1 --models o1-2024-12-17 --prompts default --replicates 1 --run-id specific_test
+        ```
+    *   Output for the run will be created in `results/{run_id}/`.
 
-4.  **Check 4: Bounding Box Accuracy (Aligned Comparison)**
-    *   **Input:** Generated STL Path, Reference STL Path, ICP Transformation Matrix (from Check 5), Configuration (`geometry_check.bounding_box_tolerance_mm`).
-    *   **Logic:**
-        *   Load both reference and generated meshes (`Trimesh`).
-        *   Apply the ICP transformation matrix (obtained during the similarity check) to the generated mesh.
-        *   Calculate the axis-aligned bounding box (AABB) extents [L, W, H] for the reference mesh and the *aligned* generated mesh.
-        *   Sort the dimensions for both.
-        *   Compare the sorted dimensions element-wise. The check passes if the absolute difference for all dimensions is within the configured tolerance.
-    *   **Prerequisite:** Render Success, Similarity Check Success (to get the transform).
-    *   **Output:** `bounding_box_accurate: true/false/null`
+3.  **Process Results for Dashboard:** After an evaluation run completes, process its raw results JSON.
+    ```bash
+    # Replace {run_id} with the actual ID of the run you want to process
+    # Example: python scripts/process_results.py --results-path results/20231027_153000/results_20231027_153000.json
+    python scripts/process_results.py --results-path results/{run_id}/results_{run_id}.json
+    ```
+    *   This generates/updates `dashboard/dashboard_data.json`.
 
-5.  **Check 5: Geometric Similarity (Mesh Comparison)**
-    *   **Input:** Generated STL Path, Reference STL Path, Configuration (`geometry_check.similarity_threshold_mm`).
-    *   **Logic:**
-        *   Load meshes (`Open3D`).
-        *   **Alignment:** Perform **Iterative Closest Point (ICP)** alignment to register generated mesh to reference. Record the final **ICP transformation matrix** and the **ICP fitness score**.
-        *   **Distance Calculation:** Calculate **Chamfer Distance** between the *aligned* generated point cloud and the reference point cloud.
-    *   **Prerequisite:** Render success, meshes load.
-    *   **Output:** Record `geometric_similarity_distance` (float), `icp_fitness_score` (float), and the ICP transformation matrix (used by Check 4). Null if prerequisites fail.
+4.  **View Dashboard:**
+    *   Open the `dashboard/dashboard.html` file in your web browser.
+    *   The dashboard loads data from `dashboard_data.json` and displays interactive charts and summary tables. Refresh the browser page after running `process_results.py` to see updated data.
 
-**Execution Logic:**
-- Checks run in order: 1, 2, 3, 5, 4. Check 4 depends on the transform from Check 5.
-
-**Outputs of `geometry_check.py`:**
-*   A dictionary/JSON object per evaluated model, conforming to the schema defined in Section 6.
-
-**Refinement Notes:**
-*   **Tolerances:** Bounding box and similarity distance tolerances are defined in `config.yaml`.
-*   **Alignment:** Successful ICP alignment (high `icp_fitness_score`) is crucial for meaningful `geometric_similarity_distance` and the aligned bounding box check.
-*   **Libraries:** Primarily uses `Trimesh` and `Open3D`.
-*   **Focus:** Checks prioritize basic validity (render, watertight, components) and geometric fidelity (similarity distance, aligned bounding box).
+5.  **Run Unit Tests (Optional):**
+    *   Ensure you have any development dependencies installed (if applicable, e.g., `pip install -r requirements-dev.txt` if it existed and contained `pytest`). You might need to install pytest directly: `pip install pytest`.
+    *   Run pytest from the project root directory:
+        ```bash
+        pytest
+        ```
 
 ---
 
-## 6. Collecting & Comparing Results
+## Geometry Checks Performed
 
-### Logging & Results Schema
+The `scripts/geometry_check.py` script performs the following evaluations on successfully generated/rendered STL files:
 
-- For each task and model combination evaluated, the results will be stored in a primary results file (e.g., `eval_results_run_XYZ.json`). This file will be a list of JSON objects.
-- **Schema for each result entry:** This schema includes details about the specific run configuration used for this entry.
-  ```json
-  {
-    "task_id": "string",
-    "model_name": "string",                 // e.g., "gpt-4o-mini"
-    "task_description": "string",           // The original description from the YAML
-    "reference_stl_path": "string",         // Path to the reference STL
-    "prompt_used": "string",                // The exact final prompt sent to the LLM API
-    "llm_config": {                         // Optional: Capture key LLM settings if varied
-        "temperature": "float/null",
-        "max_tokens": "integer/null"
-        // Add other relevant settings if needed
-    },
-    "timestamp_utc": "string",              // ISO 8601 format timestamp of this specific evaluation
-    "output_scad_path": "string",
-    "output_stl_path": "string",
-    "output_summary_json_path": "string/null",
-    "render_status": "string",              // "SUCCESS", "COMPILE_ERROR", "TIMEOUT", etc.
-    "render_duration_seconds": "float/null",
-    "render_error_message": "string/null",
-    "checks": {
-      "check_render_successful": "boolean",
-      "check_is_watertight": "boolean/null",
-      "check_is_single_component": "boolean/null",
-      "check_bounding_box_accurate": "boolean/null"
-      // Geometric similarity results are now top-level values below
-    },
-    "icp_fitness_score": "float/null",      // Lower is better alignment
-    "geometric_similarity_distance": "float/null", // e.g., Chamfer Distance, lower is more similar
-    "check_error_message": "string/null"    // Errors during geometry_check.py phase
-  }
-  ```
-- This detailed schema ensures each result record is self-contained regarding the conditions under which it was generated.
-
-### Versioning
-
-- **Configuration Tracking:** Key configuration parameters (LLM used, exact prompt, LLM settings like temperature if varied) are recorded directly within each result entry in the output JSON (see schema above).
-- **Run Identification:** While individual results contain configuration details, major evaluation runs (e.g., after significant script changes, prompt template updates, or testing a new set of models) should still be saved to uniquely named results files (e.g., `results/eval_results_v1_base_prompt.json`, `results/eval_results_v2_temp_0.5.json`) for organizational clarity and easier high-level comparison between distinct experimental setups.
-
-### Iteration
-
-- Update tasks or the scoring as new failure modes appear.
+*   **Watertight:** Checks if the mesh is manifold using Open3D.
+*   **Single Component:** Verifies the mesh consists of a single connected component (or the number specified in task requirements).
+*   **Bounding Box Accuracy:** Compares the dimensions of the generated model's aligned bounding box (using ICP alignment) to the reference model's bounding box within a tolerance (`geometry_check.bounding_box_tolerance_mm`).
+*   **Volume Accuracy:** Compares the volume of the generated model to the reference model's volume within a percentage threshold (`geometry_check.volume_threshold_percent`).
+*   **Geometric Similarity (Chamfer Distance):** Calculates the Chamfer distance between generated and reference point clouds after ICP alignment (`geometry_check.chamfer_threshold_mm`). Lower is better.
+*   **Hausdorff Distance (95th & 99th Percentile):** Calculates percentile Hausdorff distances after alignment (`geometry_check.hausdorff_threshold_mm` applies to the 95p).
+*   **ICP Fitness:** Reports the alignment quality score from the Iterative Closest Point algorithm.
 
 ---
 
-## 7. Future Work
+## Evaluation Improvements / Future Work
 
-### Incremental CAD Modifications
+Potential areas for future development and improvement of this evaluation framework include:
 
-- Provide an initial SCAD file plus a textual command to modify geometry.
-- Test how well the LLM adjusts an existing design.
-
-### Image/Sketch-to-CAD
-
-- Provide a simple line drawing or annotated photo.
-- Evaluate how accurately the LLM interprets dimensions from an image.
-
-### More Complex Parts & Assemblies
-
-- Introduce multiple features or parametric assemblies.
-- Check alignment, constraints, etc.
-
-### Advanced Metrics
-
-- Use surface-to-surface comparison with a reference STL (via CloudCompare or trimesh), for a more detailed similarity score.
+*   **Expanded Task Suite:** Increase the number and diversity of tasks to cover a wider range of geometric features, complexities, and potential edge cases.
+*   **Prompt Engineering & Optimization:** Investigate the impact of different system prompts, few-shot examples, or providing specific OpenSCAD documentation snippets to improve model performance and reliability.
+*   **Multimodal Input:** Extend the framework to evaluate model performance based on visual inputs, such as sketches, technical drawings, or existing images.
+*   **Incremental Modification Tasks:**
+    *   **Adding Operations:** Evaluate the ability of LLMs to add new features (holes, extrusions, etc.) to existing valid OpenSCAD code or STL models based on text instructions.
+    *   **Editing/Fixing:** Assess how well models can correct errors or modify specific features in existing SCAD code based on feedback or new requirements.
+*   **STL-to-STL Evaluation:** Evaluate the direct ability of models (like Zoo ML) to generate an STL file that closely matches a reference STL, potentially using different metrics or comparison techniques.
 
 ---
 
-## 8. Example Project Structure
-
-```
-my_cad_eval/
-├── tasks/
-│   ├── rect_plate_4holes.yaml
-│   ├── cylinder_spacer.yaml
-│   └── ...
-├── reference/
-│   ├── rect_plate_4holes.stl
-│   ├── cylinder_spacer.stl
-│   └── ...
-├── scripts/
-│   ├── config_loader.py          # Handles loading config.yaml
-│   ├── test_config_loader.py     # Unit tests for config loader
-│   ├── logger_setup.py           # Configures project logging
-│   ├── test_logger_setup.py      # Unit tests for logger setup
-│   ├── run_evaluation.py         # Target main orchestration script (Phase 6)
-│   ├── geometry_check.py         # Target geometry checking script (Phase 5)
-│   └── ...                       # Other future scripts (e.g., LLM clients, renderer)
-├── generated_outputs/            # Stores LLM-generated .scad and rendered .stl/.json files
-│   ├── rect_plate_4holes_gpt-4o-mini.scad
-│   ├── rect_plate_4holes_gpt-4o-mini.stl
-│   └── ...
-├── results/                      # Stores final evaluation JSON results
-│   └── eval_results_run_XYZ.json
-├── logs/                         # Stores log files (ignored by git)
-│   └── cadeval.log
-├── config.yaml                   # Main configuration file
-├── environment.yml               # Conda environment definition
-├── TODO.md                       # Project tasks
-└── README.md                     # This file
-
-````run_evaluation.py` (future script) handles:
-- Reading YAML tasks.
-- Generating SCAD via LLM APIs.
-- Invoking OpenSCAD headless to produce STLs.
-- Running geometry checks (`geometry_check.py`).
-- Saving a final JSON with results. 
+*(Refer to git history for older versions of this README.)*
 
