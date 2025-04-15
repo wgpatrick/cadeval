@@ -9,7 +9,9 @@ let charts = {
     volumePassRate: null,
     hausdorffPassRate: null,
     taskSuccessRate: null,
-    complexityChart: null
+    complexityChart: null,
+    avgTotalTime: null,
+    avgCost: null
 };
 
 // --- Helper Functions ---
@@ -158,6 +160,8 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
             avgHausdorff95p: [],
             volumePassRate: [],
             hausdorffPassRate: [],
+            avg_total_time_seconds: [],
+            avg_estimated_cost: [],
             modelIndices: [],
             providers: []
             // Add other metrics if needed
@@ -221,6 +225,8 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
             datasets[promptKey].avgHausdorff95p.push(stats?.avg_hausdorff_95p ?? NaN);
             datasets[promptKey].volumePassRate.push(stats?.volume_pass_rate ?? NaN);
             datasets[promptKey].hausdorffPassRate.push(stats?.hausdorff_pass_rate ?? NaN);
+            datasets[promptKey].avg_total_time_seconds.push(stats?.avg_total_time_seconds ?? NaN);
+            datasets[promptKey].avg_estimated_cost.push(stats?.avg_estimated_cost ?? NaN);
             datasets[promptKey].modelIndices.push(modelIndex);
             datasets[promptKey].providers.push(modelName);
         });
@@ -363,7 +369,11 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
         return promptKeys.map((promptKey, index) => {
             // Sort data for this prompt by success rate
             const sortedData = sortModelDataBySuccessRate(promptKey);
-            
+
+            // --- >>> ADD DEBUG LOG HERE <<< ---
+            console.log(`[createChartDatasets] Prompt='${promptKey}', Metric='${metricKey}', Data Found:`, sortedData[metricKey]);
+            // --- >>> END DEBUG LOG <<< ---
+
             return {
                 label: `${labelPrefix} (${promptKey})`,
                 data: sortedData[metricKey],
@@ -583,14 +593,110 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
         options: { ...distanceChartOptions, plugins: { ...distanceChartOptions.plugins, title: { display: true, text: 'Avg Hausdorff 95p Distance (mm, Lower is Better)' }}}
     });
 
-    // 7. Skipping Volume Diff Chart (Canvas ID: avgVolumeDiffChart)
+    // 7. Average Total Time Chart
+    const timeMetricKey = 'avg_total_time_seconds';
+    const avgTimeCtx = document.getElementById('avgTotalTimeChart').getContext('2d');
+    const avgTimeDatasets = createChartDatasets(timeMetricKey, 'Avg Total Time (s)');
+    charts.avgTotalTime = new Chart(avgTimeCtx, {
+        type: 'bar',
+        data: {
+            labels: getSortedLabels(avgTimeDatasets[0], modelNames),
+            datasets: avgTimeDatasets
+        },
+        options: {
+            ...distanceChartOptions, // Use distance options as base (no %)
+            plugins: {
+                 ...distanceChartOptions.plugins, // Inherit plugins like legend
+                 tooltip: {
+                     callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                 label += ': ';
+                            }
+                            if (context.parsed.y !== null && !isNaN(context.parsed.y)) {
+                                label += context.parsed.y.toFixed(1) + ' s'; // Format with 1 decimal place and 's'
+                            } else {
+                                label += 'N/A';
+                            }
+                            return label;
+                        }
+                     }
+                 },
+                title: {
+                    display: true,
+                    text: 'Average Total Time (Gen + Render) (seconds)'
+                }
+            },
+             scales: {
+                 y: {
+                     beginAtZero: true,
+                     ticks: {
+                         callback: function(value) { return value + ' s'; } // Add 's' to axis ticks
+                     }
+                 }
+             }
+        }
+    });
+    console.log("Avg Total Time Datasets:", avgTimeDatasets);
+
+    // 8. Average Estimated Cost Chart
+    const costMetricKey = 'avg_estimated_cost';
+    const avgCostCtx = document.getElementById('avgCostChart').getContext('2d');
+    const avgCostDatasets = createChartDatasets(costMetricKey, 'Avg Cost ($)');
+    charts.avgCost = new Chart(avgCostCtx, {
+        type: 'bar',
+        data: {
+            labels: getSortedLabels(avgCostDatasets[0], modelNames),
+            datasets: avgCostDatasets
+        },
+        options: {
+            ...distanceChartOptions, // Use distance options as base (no %)
+            plugins: {
+                ...distanceChartOptions.plugins, // Inherit plugins like legend
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null && !isNaN(context.parsed.y)) {
+                                // Format as currency with 4 decimal places
+                                label += '$' + context.parsed.y.toFixed(4);
+                            } else {
+                                label += 'N/A';
+                            }
+                            return label;
+                        }
+                    }
+                },
+                title: {
+                    display: true,
+                    text: 'Average Estimated Cost ($)'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        // Format Y-axis ticks as currency
+                        callback: function(value) { return '$' + value.toFixed(4); }
+                    }
+                }
+            }
+        }
+    });
+    console.log("Avg Estimated Cost Datasets:", avgCostDatasets);
+
+    // 9. Skipping Volume Diff Chart (Canvas ID: avgVolumeDiffChart)
     // We can hide this canvas or reuse it later if needed.
     const avgVolumeDiffCanvas = document.getElementById('avgVolumeDiffChart');
     if (avgVolumeDiffCanvas && avgVolumeDiffCanvas.parentElement) {
          avgVolumeDiffCanvas.parentElement.style.display = 'none'; // Hide the wrapper div
     }
 
-    // 8. Volume Pass Rate Chart
+    // 10. Volume Pass Rate Chart
     const volumePassCtx = document.getElementById('volumePassRateChart').getContext('2d');
     const volumePassRateDatasets = createChartDatasets('volumePassRate', 'Volume Pass Rate');
     charts.volumePassRate = new Chart(volumePassCtx, {
@@ -602,7 +708,7 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
         options: { ...rateChartOptions, plugins: { ...rateChartOptions.plugins, title: { display: true, text: 'Volume Pass Rate (% Rel. to Checks Run)' }}}
     });
 
-    // 9. Hausdorff Pass Rate Chart
+    // 11. Hausdorff Pass Rate Chart
     const hausdorffPassCtx = document.getElementById('hausdorffPassRateChart').getContext('2d');
     const hausdorffPassRateDatasets = createChartDatasets('hausdorffPassRate', 'Hausdorff Pass Rate');
     charts.hausdorffPassRate = new Chart(hausdorffPassCtx, {

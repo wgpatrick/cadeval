@@ -63,52 +63,78 @@ llm:
     provider: anthropic
     temperature: 0.4
     max_tokens: 15000
+    cost_per_million_input_tokens: 3.0 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 15.0 # Placeholder cost ($/Million Tokens)
   - name: claude-3-5-sonnet-20241022
     provider: anthropic
     temperature: 0.4
     max_tokens: 8000
+    cost_per_million_input_tokens: 3.0 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 15.0 # Placeholder cost ($/Million Tokens)
   - name: claude-3-5-haiku-20241022
     provider: anthropic
     temperature: 0.4
     max_tokens: 8000
+    cost_per_million_input_tokens: 0.80 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 4.0 # Placeholder cost ($/Million Tokens)
   - name: claude-3-haiku-20240307
     provider: anthropic
     temperature: 0.4
     max_tokens: 4000
+    cost_per_million_input_tokens: 0.25 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 1.25 # Placeholder cost ($/Million Tokens)
   - name: o1-2024-12-17
     provider: openai
     temperature: 0.4
     max_tokens: 15000
-  - name: chatgpt-4o-latest
+    cost_per_million_input_tokens: 15.0 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 60.0 # Placeholder cost ($/Million Tokens)
+  - name: gpt-4o-2024-08-06
     provider: openai
     temperature: 0.4
     max_tokens: 50000
+    cost_per_million_input_tokens: 2.50 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 10.0 # Placeholder cost ($/Million Tokens)
   - name: o3-mini-2025-01-31
     provider: openai
     temperature: 0.4
     max_tokens: 15000
-  - name: gpt-4o-2024-11-20
+    cost_per_million_input_tokens: 1.1 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 4.4 # Placeholder cost ($/Million Tokens)
+  - name: gpt-4.1-2025-04-14
     provider: openai
     temperature: 0.4
     max_tokens: 15000
-  - name: gpt-4o-mini-2024-07-18
+    cost_per_million_input_tokens: 2.0 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 8.0 # Placeholder cost ($/Million Tokens)
+  - name: gpt-4.1-mini-2025-04-14
     provider: openai
     temperature: 0.4
     max_tokens: 15000
-  - name: gemini-2.5-pro-preview-03-25   
+    cost_per_million_input_tokens: 0.4 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 1.6 # Placeholder cost ($/Million Tokens)
+  - name: gemini-2.5-pro-preview-03-25
     provider: google
     temperature: 0.4
     max_tokens: 15000
+    cost_per_million_input_tokens: 1.25 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 10.0 # Placeholder cost ($/Million Tokens)
   - name: gemini-2.0-flash
     provider: google
     temperature: 0.4
     max_tokens: 15000
+    cost_per_million_input_tokens: 0.1 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 0.4 # Placeholder cost ($/Million Tokens)
   - name: gemini-1.5-pro
     provider: google
     temperature: 0.4
     max_tokens: 15000
+    cost_per_million_input_tokens: 1.25 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 5.0 # Placeholder cost ($/Million Tokens)
   - name: zoo-ml-text-to-cad
     provider: zoo_cli
+    cost_per_minute: 0.50 # Placeholder cost
+    free_tier_seconds: 10 # Placeholder value
     cli_args:
       output_format: stl
 geometry_check:
@@ -119,4 +145,4 @@ geometry_check:
   volume_threshold_percent: 1.0
 
 evaluation:
-  num_replicates: 2
+  num_replicates: 1

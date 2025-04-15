@@ -525,6 +525,63 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
             elif isinstance(haus_95p_val, str):
                  logger.debug(f"Skipping non-numeric Hausdorff 95p value: {haus_95p_val}")
 
+            # --- Collect Time Metrics ---
+            time_gen_raw = entry.get('llm_duration_seconds') or entry.get('generation_duration_seconds')
+            time_render_raw = entry.get('render_duration_seconds')
+
+            time_gen = 0.0
+            if time_gen_raw is not None:
+                try: time_gen = float(time_gen_raw)
+                except (ValueError, TypeError): pass
+
+            time_render = 0.0
+            if time_render_raw is not None:
+                try: time_render = float(time_render_raw)
+                except (ValueError, TypeError): pass
+
+            total_time = time_gen + time_render
+
+            # Append valid times to metrics lists
+            if time_gen_raw is not None:
+                 m_stat["metrics"]["time_gen"].append(time_gen)
+                 t_stat["metrics"]["time_gen"].append(time_gen)
+            if time_render_raw is not None:
+                 m_stat["metrics"]["time_render"].append(time_render)
+                 t_stat["metrics"]["time_render"].append(time_render)
+            # Only append total_time if at least one component was present
+            if time_gen_raw is not None or time_render_raw is not None:
+                 m_stat["metrics"]["total_time"].append(total_time)
+                 t_stat["metrics"]["total_time"].append(total_time)
+
+            # --- Collect Cost Metrics ---
+            cost_raw = entry.get('estimated_cost')
+            prompt_tokens_raw = entry.get('prompt_tokens')
+            completion_tokens_raw = entry.get('completion_tokens')
+
+            cost_val = 0.0
+            if cost_raw is not None:
+                try: cost_val = float(cost_raw)
+                except (ValueError, TypeError): pass
+                # Append cost only if valid
+                m_stat["metrics"]["estimated_cost"].append(cost_val)
+                t_stat["metrics"]["estimated_cost"].append(cost_val)
+
+            prompt_tokens_val = 0
+            if prompt_tokens_raw is not None:
+                try: prompt_tokens_val = int(prompt_tokens_raw)
+                except (ValueError, TypeError): pass
+                # Append tokens only if valid
+                m_stat["metrics"]["prompt_tokens"].append(prompt_tokens_val)
+                t_stat["metrics"]["prompt_tokens"].append(prompt_tokens_val)
+
+            completion_tokens_val = 0
+            if completion_tokens_raw is not None:
+                try: completion_tokens_val = int(completion_tokens_raw)
+                except (ValueError, TypeError): pass
+                # Append tokens only if valid
+                m_stat["metrics"]["completion_tokens"].append(completion_tokens_val)
+                t_stat["metrics"]["completion_tokens"].append(completion_tokens_val)
+
     # --- Calculate Rates and Statistics --- Need to handle nested model_stats
     def calculate_final_stats(stat_dict, is_nested=False):
         final_stats_result = {}
@@ -549,7 +606,23 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
                     final["chamfer_pass_rate"] = (stats["chamfer_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                     # Calculate metric statistics
                     for metric, values in stats["metrics"].items():
-                        metric_name = metric.replace('_dist', '').replace('haus_','hausdorff_')
+                        # --- Add mapping for time metrics --- Start ---
+                        metric_key_map = {
+                            "time_gen": "generation_time_seconds",
+                            "time_render": "render_time_seconds",
+                            "total_time": "total_time_seconds",
+                            "chamfer_dist": "chamfer",
+                            "haus_95p_dist": "hausdorff_95p",
+                            # --- Add cost/token mappings ---
+                            "estimated_cost": "estimated_cost",
+                            "prompt_tokens": "prompt_tokens",
+                            "completion_tokens": "completion_tokens"
+                        }
+                        metric_name = metric_key_map.get(metric)
+                        if not metric_name:
+                            metric_name = metric.replace('_dist', '') # Fallback if not in map
+                        # --- Add mapping for time metrics --- End ---
+
                         if values:
                             try: final[f"avg_{metric_name}"] = statistics.mean(values)
                             except statistics.StatisticsError: final[f"avg_{metric_name}"] = None
@@ -585,7 +658,23 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
                 final["chamfer_pass_rate"] = (stats["chamfer_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                 # Calculate metric statistics
                 for metric, values in stats["metrics"].items():
-                    metric_name = metric.replace('_dist', '').replace('haus_','hausdorff_')
+                    # --- Add mapping for time metrics --- Start ---
+                    metric_key_map = {
+                        "time_gen": "generation_time_seconds",
+                        "time_render": "render_time_seconds",
+                        "total_time": "total_time_seconds",
+                        "chamfer_dist": "chamfer",
+                        "haus_95p_dist": "hausdorff_95p",
+                        # --- Add cost/token mappings ---
+                        "estimated_cost": "estimated_cost",
+                        "prompt_tokens": "prompt_tokens",
+                        "completion_tokens": "completion_tokens"
+                    }
+                    metric_name = metric_key_map.get(metric)
+                    if not metric_name:
+                        metric_name = metric.replace('_dist', '') # Fallback if not in map
+                    # --- Add mapping for time metrics --- End ---
+
                     if values:
                         try: final[f"avg_{metric_name}"] = statistics.mean(values)
                         except statistics.StatisticsError: final[f"avg_{metric_name}"] = None
@@ -781,6 +870,14 @@ def main(args):
         summary_entry["overall_passed"] = all(comp is True for comp in components_passed if comp is not None)
         summary_entry["geometric_similarity_distance"] = entry.get("geometric_similarity_distance")
         summary_entry["hausdorff_95p_distance"] = entry.get("hausdorff_95p_distance")
+        # --- Add time fields --- 
+        summary_entry["llm_duration_seconds"] = entry.get("llm_duration_seconds")
+        summary_entry["generation_duration_seconds"] = entry.get("generation_duration_seconds")
+        summary_entry["render_duration_seconds"] = entry.get("render_duration_seconds")
+        # --- Add cost fields ---
+        summary_entry["prompt_tokens"] = entry.get("prompt_tokens")
+        summary_entry["completion_tokens"] = entry.get("completion_tokens")
+        summary_entry["estimated_cost"] = entry.get("estimated_cost")
 
         if summary_entry["task_id"] and summary_entry["model_name"]:
              data_for_summaries.append(summary_entry)

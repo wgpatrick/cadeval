@@ -32,7 +32,9 @@
     <div id="charts-container" class="charts-grid" style="display: none;">
         <div class="chart-wrapper"><canvas id="successRateChart"></canvas></div>
         <div class="chart-wrapper"><canvas id="renderSuccessRateChart"></canvas></div>
-        <div class="chart-wrapper"><canvas id="checksRunSuccessRateChart"></canvas></div>
+        <div class="chart-wrapper" id="checksRunWrapper"><canvas id="checksRunSuccessRateChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="avgTotalTimeChart"></canvas></div>
+        <div class="chart-wrapper"><canvas id="avgCostChart"></canvas></div>
         <div class="chart-wrapper"><canvas id="checksPassedChart"></canvas></div>
         <div class="chart-wrapper"><canvas id="avgSimilarityChart"></canvas></div>
         <div class="chart-wrapper"><canvas id="avgHausdorffChart"></canvas></div>
@@ -40,8 +42,8 @@
         <div class="chart-wrapper"><canvas id="volumePassRateChart"></canvas></div>
         <div class="chart-wrapper"><canvas id="hausdorffPassRateChart"></canvas></div>
         <div class="chart-wrapper"><canvas id="taskSuccessRateChart"></canvas></div>
-        <!-- New Canvas for Complexity Chart -->
-        <div class="chart-wrapper"><canvas id="complexityChart"></canvas></div>
+        <div class="chart-wrapper" id="complexityWrapper" style="display: none;"><canvas id="complexityChart"></canvas></div>
+        <div class="chart-wrapper" id="taskChartWrapper" style="display: none;"><canvas id="taskChart"></canvas></div>
     </div>
 
     <div id="grids-container">

@@ -54,6 +54,7 @@ class BaseLLMClient:
         self.model_name = model_name
         self.max_retries = kwargs.get('max_retries', 3)
         self.parameters = kwargs
+        self.last_response = None # Initialize last_response attribute
         
         # Logging initialization
         logger.info(f"Initializing {provider} client with model: {model_name}")
@@ -191,6 +192,7 @@ class OpenAIClient(BaseLLMClient):
             )
             
             generated_text = response.choices[0].message.content
+            self.last_response = response # Store the raw response
             duration = time.time() - start_time
             
             # Log the response
@@ -302,6 +304,7 @@ class OpenAIReasoningClient(BaseLLMClient):
                  raise LLMError(error_msg)
 
             generated_text = response.output_text
+            self.last_response = response # Store the raw response
             
             # Log the successful response
             self._log_response(generated_text, duration)
@@ -384,6 +387,7 @@ class AnthropicClient(BaseLLMClient):
             )
             
             generated_text = response.content[0].text
+            self.last_response = response # Store the raw response
             duration = time.time() - start_time
             
             # Log the response
@@ -468,6 +472,7 @@ class GoogleAIClient(BaseLLMClient):
             
             response = model.generate_content(prompt)
             generated_text = response.text
+            self.last_response = response # Store the raw response
             duration = time.time() - start_time
             
             # Log the response

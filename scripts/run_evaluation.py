@@ -41,7 +41,7 @@ from scripts.render_scad import render_scad_file, validate_openscad_config, Rend
 from scripts.geometry_check import perform_geometry_checks, GeometryCheckError
 
 # --- Add Zoo CLI Executor Function --- Start ---
-def generate_stl_with_zoo(prompt: str, output_stl_path: str, model_config: Dict[str, Any], logger: logging.Logger) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def generate_stl_with_zoo(prompt: str, output_stl_path: str, model_config: Dict[str, Any], logger: logging.Logger) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[float]]:
     """Generates an STL file using the Zoo CLI.
 
     Args:
@@ -55,6 +55,7 @@ def generate_stl_with_zoo(prompt: str, output_stl_path: str, model_config: Dict[
         - The final path to the generated STL if successful, otherwise None.
         - An error message string if generation failed, otherwise None.
         - The command string that was executed.
+        - The duration of the subprocess call in seconds, or None if it failed early.
     """
     cli_args = model_config.get("cli_args", {})
     output_format = cli_args.get("output_format", "stl") # Default to stl
@@ -83,6 +84,7 @@ def generate_stl_with_zoo(prompt: str, output_stl_path: str, model_config: Dict[
     error_message = None
     generated_stl_src_path = None
     final_stl_path = None
+    duration = None # Initialize duration
 
     try:
         start_time = time.time() # Ensure time is imported
@@ -139,7 +141,7 @@ def generate_stl_with_zoo(prompt: str, output_stl_path: str, model_config: Dict[
             except Exception as clean_err:
                 logger.warning(f"Failed to remove temporary directory {temp_output_dir}: {clean_err}")
 
-    return final_stl_path, error_message, cmd_str_display # Return the display string
+    return final_stl_path, error_message, cmd_str_display, duration # Return duration
 # --- Add Zoo CLI Executor Function --- End ---
 
 def parse_arguments() -> argparse.Namespace:
@@ -286,6 +288,9 @@ def assemble_final_results(
         list_identifier = "zoo" if is_zoo_run else "scad"
         processed_gen_indices.add( (list_identifier, found_index) )
 
+        # --- Extract LLM Duration if applicable ---
+        llm_duration = gen_result.get("llm_duration_seconds") if not is_zoo_run else None
+
         # --- Retrieve Render and Check Info ---
         render_info = None
         if not is_zoo_run and scad_path_from_gen_info:
@@ -320,7 +325,14 @@ def assemble_final_results(
             "reference_volume_mm3": None, "generated_volume_mm3": None,
             "reference_bbox_mm": None, "generated_bbox_aligned_mm": None,
             "generation_error": gen_result.get("error") if not gen_result.get("success") else None,
-            "check_error": None
+            "check_error": None,
+            # --- Add time fields ---
+            "llm_duration_seconds": None,
+            "generation_duration_seconds": None,
+            "render_duration_seconds": None, # Already exists but ensure it's here
+            "prompt_tokens": None, # Add cost-related fields
+            "completion_tokens": None,
+            "estimated_cost": None
         }
 
         # --- Populate Paths (Relative) ---
@@ -335,18 +347,79 @@ def assemble_final_results(
 
         # --- Populate Provider-Specific Fields ---
         if is_zoo_run:
+            # --- Get Zoo duration ---
+            generation_duration = gen_result.get("generation_duration_seconds")
+
             final_entry["output_scad_path"] = None
             final_entry["render_status"] = "N/A"
-            final_entry["render_duration_seconds"] = None
+            final_entry["render_duration_seconds"] = None # Zoo doesn't render SCAD
             final_entry["render_error_message"] = None
             final_entry["output_summary_json_path"] = None
             final_entry["checks"]["check_render_successful"] = None
+            # --- Set non-applicable time fields for Zoo ---
+            final_entry["llm_duration_seconds"] = None
+            final_entry["generation_duration_seconds"] = generation_duration # Assign the retrieved duration
+            # --- Calculate Zoo Cost --- Start ---
+            estimated_cost = None
+            if generation_duration is not None:
+                # Retrieve cost parameters from the specific model_config for this run
+                cost_per_minute = model_config.get("cost_per_minute")
+                free_tier_seconds = model_config.get("free_tier_seconds", 0)
+                try:
+                    if cost_per_minute is not None:
+                        cost_per_minute_f = float(cost_per_minute)
+                        free_tier_seconds_f = float(free_tier_seconds)
+                        generation_duration_f = float(generation_duration)
+                        billable_seconds = max(0, generation_duration_f - free_tier_seconds_f)
+                        estimated_cost = (billable_seconds / 60.0) * cost_per_minute_f
+                    else:
+                         logger.warning(f"Missing 'cost_per_minute' in config for zoo_cli model '{model_name}'. Cannot calculate cost.")
+                except (ValueError, TypeError) as e:
+                     logger.warning(f"Invalid cost parameter for zoo_cli model '{model_name}': {e}. Cannot calculate cost.")
+            final_entry["estimated_cost"] = estimated_cost
+            final_entry["prompt_tokens"] = None # Zoo doesn't use tokens
+            final_entry["completion_tokens"] = None # Zoo doesn't use tokens
+            # --- Calculate Zoo Cost --- End ---
         else: # Not Zoo
+            # --- Set non-applicable time/cost fields for non-Zoo ---
+            final_entry["generation_duration_seconds"] = None
+            final_entry["llm_duration_seconds"] = llm_duration # Set the extracted LLM duration
+            # --- Get token counts from gen_result (added in Step 2.2) ---
+            final_entry["prompt_tokens"] = gen_result.get("prompt_tokens")
+            final_entry["completion_tokens"] = gen_result.get("completion_tokens")
+            # --- Calculate LLM Cost --- Start ---
+            estimated_cost = None
+            prompt_tokens = final_entry["prompt_tokens"]
+            completion_tokens = final_entry["completion_tokens"]
+            # --- Use new cost keys ---
+            cost_input_M = model_config.get("cost_per_million_input_tokens") 
+            cost_output_M = model_config.get("cost_per_million_output_tokens")
+
+            if prompt_tokens is not None and completion_tokens is not None and cost_input_M is not None and cost_output_M is not None:
+                try:
+                    # --- Divide cost by 1M --- 
+                    cost_input_f = float(cost_input_M) / 1_000_000.0 
+                    cost_output_f = float(cost_output_M) / 1_000_000.0
+                    prompt_tokens_f = float(prompt_tokens)
+                    completion_tokens_f = float(completion_tokens)
+                    estimated_cost = (prompt_tokens_f * cost_input_f) + (completion_tokens_f * cost_output_f)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid cost or token parameter for LLM model '{model_name}': {e}. Cannot calculate cost.")
+            elif cost_input_M is None or cost_output_M is None:
+                # --- Update warning message key names ---
+                logger.warning(f"Missing cost parameters ('cost_per_million_input_tokens' or 'cost_per_million_output_tokens') in config for LLM model '{model_name}'. Cannot calculate cost.")
+            # Don't warn if tokens are missing, might be expected if generation failed before usage was returned
+
+            final_entry["estimated_cost"] = estimated_cost
+            # --- Calculate LLM Cost --- End ---
+
             final_entry["output_scad_path"] = make_relative(scad_path_from_gen_info)
             if render_info:
                 render_success = (render_info.get("status") == "Success")
                 final_entry["render_status"] = render_info.get("status")
-                final_entry["render_duration_seconds"] = render_info.get("duration")
+                # --- Retrieve and assign render duration --- 
+                render_duration = render_info.get("duration")
+                final_entry["render_duration_seconds"] = render_duration # Assign render duration
                 final_entry["render_error_message"] = render_info.get("error")
                 final_entry["checks"]["check_render_successful"] = render_success
                 if render_success:
@@ -361,6 +434,7 @@ def assemble_final_results(
             else: # Render info missing
                 logger.warning(f"Missing render info for {scad_path_from_gen_info}")
                 final_entry["render_status"] = "Error"
+                final_entry["render_duration_seconds"] = None # Ensure set to None if missing
                 final_entry["render_error_message"] = "Render metadata missing"
                 final_entry["checks"]["check_render_successful"] = False
                 final_entry["output_stl_path"] = None
@@ -461,7 +535,14 @@ def assemble_final_results(
                 "reference_volume_mm3": None, "generated_volume_mm3": None,
                 "reference_bbox_mm": None, "generated_bbox_aligned_mm": None,
                 "generation_error": gen_result.get("error", "Unknown generation failure"),
-                "check_error": "Checks not run due to generation failure."
+                "check_error": "Checks not run due to generation failure.",
+                # --- Add time fields ---
+                "llm_duration_seconds": None,
+                "generation_duration_seconds": None,
+                "render_duration_seconds": None, # Already exists but ensure it's here
+                "prompt_tokens": None, # Add cost-related fields
+                "completion_tokens": None,
+                "estimated_cost": None # Cost not calculated for failures yet
             }
             final_results_list.append(final_entry)
 
@@ -664,7 +745,7 @@ def main():
                         # --- Zoo CLI Path ---
                         actual_scad_path = None # No SCAD file for Zoo
                         try:
-                            final_stl_path, error_msg, cmd_str = generate_stl_with_zoo(
+                            final_stl_path, error_msg, cmd_str, duration = generate_stl_with_zoo(
                                 prompt=task_description,
                                 output_stl_path=expected_stl_path, # Aim for the final path
                                 model_config=model_config,
@@ -682,6 +763,7 @@ def main():
                                 "output_stl_path": final_stl_path, # This will be None on failure
                                 "error": error_msg,
                                 "command_executed": cmd_str,
+                                "generation_duration_seconds": duration,
                                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
                             })
                             # Add to map ONLY if successful
@@ -706,6 +788,7 @@ def main():
                                 "model_config_used": model_config, "prompt_key_used": prompt_key,
                                 "replicate_id": replicate_id, "success": False, "output_stl_path": None,
                                 "error": f"Orchestration error: {e}", "command_executed": None,
+                                "generation_duration_seconds": None,
                                 "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
                             })
                     else:

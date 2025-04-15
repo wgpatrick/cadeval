@@ -75,7 +75,9 @@ def generate_scad_for_task(
         "success": False,
         "output_path": None,
         "error": None,
-        "generation_time": None
+        "llm_duration_seconds": None,
+        "prompt_tokens": None,
+        "completion_tokens": None
     }
     
     # Create output path including replicate_id and prompt_key
@@ -117,9 +119,44 @@ def generate_scad_for_task(
         return result
     
     # Generate OpenSCAD code
-    start_time = time.time()
     try:
+        start_time = time.time()
         generated_code = client.generate_text(prompt)
+        end_time = time.time()
+        llm_duration = end_time - start_time
+        result["llm_duration_seconds"] = llm_duration
+        
+        # --- Extract Token Usage --- Start ---
+        prompt_tokens = None
+        completion_tokens = None
+        try:
+            # Access the underlying response object from the client call
+            # This requires the client's generate_text method to return the full response object
+            # or store it internally. Assuming client returns the full response for now.
+            # NOTE: This part might need adjustment based on how llm_clients actually return/store the response.
+            raw_response = client.last_response # Assuming client stores the raw response
+            if client.provider == 'openai':
+                if hasattr(raw_response, 'usage') and raw_response.usage:
+                    prompt_tokens = raw_response.usage.prompt_tokens
+                    completion_tokens = raw_response.usage.completion_tokens
+            elif client.provider == 'anthropic':
+                 if hasattr(raw_response, 'usage') and raw_response.usage:
+                    prompt_tokens = raw_response.usage.input_tokens
+                    completion_tokens = raw_response.usage.output_tokens
+            elif client.provider == 'google':
+                 if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
+                    prompt_tokens = raw_response.usage_metadata.prompt_token_count
+                    # Sum tokens from all candidates (usually just one)
+                    completion_tokens = raw_response.usage_metadata.candidates_token_count
+
+            result["prompt_tokens"] = prompt_tokens
+            result["completion_tokens"] = completion_tokens
+            logger.debug(f"Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}")
+        except AttributeError:
+            logger.warning(f"Could not find usage information in response object for {client.provider}. Client implementation might need update or response structure changed.")
+        except Exception as e:
+            logger.warning(f"Error extracting token usage for {client.provider}: {e}")
+        # --- Extract Token Usage --- End ---
         
         # Check if the response is empty
         if not generated_code:
@@ -153,10 +190,6 @@ def generate_scad_for_task(
         logger.error(error_msg)
         result["error"] = error_msg
         return result
-    
-    # Record the time taken
-    end_time = time.time()
-    result["generation_time"] = end_time - start_time
     
     return result
 
@@ -362,7 +395,7 @@ if __name__ == "__main__":
             task_id = result["task_id"]
             model = result["model"]
             status = "SUCCESS" if result["success"] else "FAILED"
-            duration = f"{result['generation_time']:.2f}s" if result["generation_time"] else "N/A"
+            duration = f"{result['llm_duration_seconds']:.2f}s" if result["llm_duration_seconds"] else "N/A"
             
             print(f"\n[{i+1}] Task: {task_id} | Model: {model} | Status: {status} | Duration: {duration}")
             if result["output_path"] and result["success"]:
