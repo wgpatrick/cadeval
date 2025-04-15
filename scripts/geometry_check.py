@@ -534,7 +534,7 @@ def perform_geometry_checks(
     """
     Perform all geometry checks for a given generated STL file.
     """
-    logger.info(f"Performing geometry checks for: {os.path.basename(generated_stl_path)}")
+    logger.info(f"----- Starting Geometry Checks for: {os.path.basename(generated_stl_path)} -----")
 
     # --- Read Thresholds from Config ---
     try:
@@ -604,10 +604,12 @@ def perform_geometry_checks(
         # Set all checks to None/False as they cannot be run
         for check_key in results["checks"]:
             results["checks"][check_key] = None if check_key == "check_render_successful" else False # Render status might be known
+        logger.info(f"----- Finished Geometry Checks (STL Missing) for: {os.path.basename(generated_stl_path)} -----")
         return results
     # --- End Early Exit ---
 
     # --- Check 2: Watertight Check ---
+    logger.debug("Attempting watertight check...")
     try:
         is_watertight, watertight_error = check_watertight(generated_stl_path, logger)
         results["checks"]["check_is_watertight"] = is_watertight
@@ -615,10 +617,12 @@ def perform_geometry_checks(
             results["check_errors"].append(f"WatertightCheck: {watertight_error}")
     except Exception as e:
         logger.error(f"Unhandled error during watertight check: {e}", exc_info=True)
-        results["checks"]["check_is_watertight"] = False # Treat unhandled exceptions as failure
+        results["checks"]["check_is_watertight"] = False
         results["check_errors"].append(f"WatertightCheck: Unhandled Exception - {e}")
+    logger.debug("Watertight check finished.")
 
     # --- Check 3: Single Component Check ---
+    logger.debug("Attempting single component check...")
     try:
         is_single_component, component_error = check_single_component(generated_stl_path, task_requirements, logger)
         results["checks"]["check_is_single_component"] = is_single_component
@@ -626,8 +630,9 @@ def perform_geometry_checks(
             results["check_errors"].append(f"SingleComponentCheck: {component_error}")
     except Exception as e:
         logger.error(f"Unhandled error during single component check: {e}", exc_info=True)
-        results["checks"]["check_is_single_component"] = False # Treat unhandled exceptions as failure
+        results["checks"]["check_is_single_component"] = False
         results["check_errors"].append(f"SingleComponentCheck: Unhandled Exception - {e}")
+    logger.debug("Single component check finished.")
 
     final_transform = None # Variable to store transform from Similarity Check
 
@@ -643,6 +648,7 @@ def perform_geometry_checks(
         results["checks"]["check_volume_passed"] = None
     else:
         # --- Check 5: Similarity (Hausdorff/Chamfer) and Alignment ---
+        logger.debug("Attempting similarity check (ICP/Chamfer/Hausdorff)...")
         try:
             # Note: check_similarity now returns:
             # (chamfer_distance, icp_fitness, transformation_matrix, hausdorff_95p, hausdorff_99p, error_msg)
@@ -705,7 +711,7 @@ def perform_geometry_checks(
             final_transform = None # Ensure transform is None on error
 
         # --- Check 4: Bounding Box (Aligned vs Reference) ---
-        # Runs only if alignment transform was obtained *and* similarity check didn't have a major error
+        logger.debug("Attempting aligned bounding box check...")
         if final_transform is not None:
              try:
                  is_bbox_accurate, ref_dims, aligned_dims, bbox_error = compare_aligned_bounding_boxes(
@@ -726,35 +732,62 @@ def perform_geometry_checks(
                 results["checks"]["check_bounding_box_accurate"] = False
                 results["check_errors"].append(f"AlignedBBoxCheck: Unhandled Exception - {e}")
         else:
-             logger.warning("Skipping aligned bounding box check as alignment failed, was skipped, or similarity check encountered an error.")
-             results["checks"]["check_bounding_box_accurate"] = None # Explicitly None if skipped due to failed alignment
+             logger.warning("Skipping aligned bounding box check because alignment transform is missing.")
+             results["checks"]["check_bounding_box_accurate"] = None
+             results["check_errors"].append("AlignedBBoxCheck: Skipped due to missing alignment transform.")
+        logger.debug("Aligned bounding box check finished.")
 
         # --- Check 6: Volume Check ---
+        logger.debug("Attempting volume check...")
         try:
-            is_volume_passed, ref_vol, gen_vol, volume_error = check_volume(
+            is_volume_passed, ref_vol, gen_vol, vol_error = check_volume(
                  generated_stl_path,
                  reference_stl_path,
-                 volume_threshold_percent=volume_threshold_percent,
-                 logger=logger
+                 volume_threshold_percent,
+                 logger
             )
             results["checks"]["check_volume_passed"] = is_volume_passed
             results["reference_volume_mm3"] = ref_vol
             results["generated_volume_mm3"] = gen_vol
-            if volume_error:
-                results["check_errors"].append(volume_error)
+            if vol_error:
+                results["check_errors"].append(vol_error)
 
         except Exception as e:
             logger.error(f"Unhandled error during volume check: {e}", exc_info=True)
             results["checks"]["check_volume_passed"] = False
             results["check_errors"].append(f"VolumeCheck: Unhandled Exception - {e}")
+        logger.debug("Volume check finished.")
 
     # --- End of checks requiring reference STL ---
 
-    # Consolidate overall error state if specific checks failed badly
-    if not results["error"] and results["check_errors"]:
-        results["error"] = "One or more geometry checks failed or encountered errors. See check_errors list."
+    # --- Convert NumPy bools to Python bools for JSON serialization --- Start ---
+    try:
+        # Check if 'checks' key exists and is a dictionary
+        checks_dict = results.get("checks")
+        if isinstance(checks_dict, dict):
+            for check_key in checks_dict:
+                check_value = checks_dict[check_key]
+                # Check if it's a NumPy boolean
+                if isinstance(check_value, np.bool_):
+                    # Convert to Python boolean
+                    results["checks"][check_key] = bool(check_value)
+                    # Optional: Add debug logging if needed
+                    # logger.debug(f"Converted np.bool_ to bool for check key: {check_key}")
+    except Exception as e:
+        # Log error but don't crash the whole check process
+        logger.warning(f"Error converting boolean types for JSON serialization: {e}")
+    # --- Convert NumPy bools to Python bools for JSON serialization --- End ---
 
-    logger.info(f"Geometry checks completed for: {os.path.basename(generated_stl_path)}")
+    # --- Final summary log --- Start ---
+    if results.get("error"):
+        logger.error(f"Geometry checks failed for {os.path.basename(generated_stl_path)} due to error: {results['error']}")
+    elif results.get("check_errors"):
+         logger.warning(f"Geometry checks completed for {os.path.basename(generated_stl_path)} with issues: {'; '.join(results['check_errors'])}")
+    else:
+        logger.info(f"Geometry checks completed successfully for {os.path.basename(generated_stl_path)}")
+    # --- Final summary log --- End ---
+
+    logger.info(f"----- Finished Geometry Checks for: {os.path.basename(generated_stl_path)} -----")
     return results
 
 if __name__ == "__main__":
