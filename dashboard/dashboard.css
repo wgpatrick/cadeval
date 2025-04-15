@@ -44,13 +44,14 @@ h2 {
 }
 
 /* Chart Styles */
-.charts-container {
+.charts-grid {
     display: grid;
     /* Set grid to 3 columns */
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
+    grid-auto-flow: dense;
     gap: 20px;
     /* Apply max-width and centering directly */
-    max-width: 1200px; /* Adjust as needed */
+    max-width: 100%; /* Adjust as needed */
     margin: 20px auto 30px auto; /* Center horizontally, add vertical margins */
 }
 

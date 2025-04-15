@@ -6,7 +6,7 @@ This repository contains a framework for evaluating the capability of Large Lang
 
 ## Goal & Scope
 
-- **Goal**: Assess the reliability and geometric accuracy of various LLMs in producing single, simple mechanical parts based on text prompts, including analysis based on task complexity.
+- **Goal**: Assess the reliability and geometric accuracy of various LLMs in producing single, simple mechanical parts based on text prompts, including analysis based on task complexity, execution time, and estimated cost.
 - **Scope**:
   - Focus on single-part generation.
   - Input is primarily text descriptions defined in task files.
@@ -19,7 +19,7 @@ This repository contains a framework for evaluating the capability of Large Lang
 
 The evaluation process follows these steps:
 
-1.  **Configuration (`config.yaml`)**: Defines models to test, API keys (sourced from `.env`), prompt templates, directories, geometry check thresholds, and evaluation parameters (e.g., number of replicates per task).
+1.  **Configuration (`config.yaml`)**: Defines models to test, API keys (sourced from `.env`), prompt templates, directories, geometry check thresholds, cost parameters (token/time-based), and evaluation parameters (e.g., number of replicates per task).
 2.  **Task Definition (`tasks/*.yaml`)**: Each task YAML file specifies:
     *   `task_id`: Unique identifier.
     *   `description`: The text prompt for the LLM.
@@ -29,19 +29,19 @@ The evaluation process follows these steps:
 3.  **Execution (`scripts/run_evaluation.py`)**: This is the main script that orchestrates the evaluation:
     *   Loads configuration (`config.yaml`) and selected tasks (`tasks/`).
     *   Iterates through specified models (from `config.yaml`), prompts (from `config.yaml`), and the requested number of replicates.
-    *   **For standard LLMs:** Calls `scripts/generate_scad.py` to interact with LLM APIs, saving generated `.scad` files to `results/{run_id}/scad/`.
-    *   **For `zoo_cli`:** Calls the `zoo ml text-to-cad export` command directly, saving the output `.stl` to `results/{run_id}/stl/`.
-    *   **Rendering:** For successfully generated `.scad` files, calls OpenSCAD via `scripts/render_scad.py` to render them into `.stl` files in `results/{run_id}/stl/`.
+    *   **For standard LLMs:** Calls `scripts/generate_scad.py` to interact with LLM APIs, saving generated `.scad` files to `results/{run_id}/scad/`. Captures LLM API call duration and token counts.
+    *   **For `zoo_cli`:** Calls the `zoo ml text-to-cad export` command directly, saving the output `.stl` to `results/{run_id}/stl/`. Captures command execution duration.
+    *   **Rendering:** For successfully generated `.scad` files, calls OpenSCAD via `scripts/render_scad.py` to render them into `.stl` files in `results/{run_id}/stl/`. Captures rendering duration.
     *   **Geometry Checks:** For all successfully generated/rendered `.stl` files, calls `scripts/geometry_check.py` to perform checks against the reference STL.
-    *   Aggregates raw results (generation status, render status, check results, metrics) for each attempt into `results/{run_id}/results_{run_id}.json`. Also creates a log file `results/{run_id}/run_{run_id}.log`.
+    *   Aggregates raw results (generation status, render status, check results, metrics, timings, token counts) for each attempt into `results/{run_id}/results_{run_id}.json`. Also creates a log file `results/{run_id}/run_{run_id}.log`.
 4.  **Post-Processing (`scripts/process_results.py`)**:
     *   Reads the raw `results_{run_id}.json` file from a specified run.
-    *   Calculates summary statistics (`meta_statistics` grouped by model/prompt, `task_statistics` grouped by task).
+    *   Calculates summary statistics (`meta_statistics` grouped by model/prompt, `task_statistics` grouped by task), including average time and estimated cost metrics.
     *   Calculates complexity analysis based on `manual_operations` from task YAMLs.
     *   Formats the processed data and statistics into `dashboard/dashboard_data.json`.
 5.  **Dashboard (`dashboard/`)**:
     *   A web-based dashboard (`dashboard.html`, `dashboard.js`, `dashboard.css`) reads `dashboard_data.json`.
-    *   Displays interactive charts (using Chart.js) and tables visualizing model performance across various metrics.
+    *   Displays interactive charts (using Chart.js) and tables visualizing model performance across various metrics, including average time and cost.
 
 ---
 
@@ -51,8 +51,6 @@ The evaluation process follows these steps:
 CadEval/
 ├── config.yaml             # Main configuration file
 ├── environment.yml           # Conda environment definition (or requirements.txt)
-├── requirements.txt        # pip requirements file (optional if using conda)
-├── requirements-dev.txt    # Optional dev dependencies
 ├── .env                    # API Keys and environment variables (add to .gitignore!)
 ├── .gitignore              # Specifies intentionally untracked files
 ├── README.md               # This file
@@ -71,7 +69,7 @@ CadEval/
 │   └── logger_setup.py       # Configures logging
 ├── results/                # Output directory for evaluation runs
 │   └── {run_id}/             # Each run gets its own directory
-│       ├── results_{run_id}.json # Raw detailed results for the run
+│       ├── results_{run_id}.json # Raw detailed results for the run, including status, metrics, timings, and token counts.
 │       ├── run_{run_id}.log      # Log file for the run
 │       ├── scad/                 # Generated .scad files (for non-Zoo models)
 │       │   └── *.scad
@@ -81,7 +79,7 @@ CadEval/
 │   ├── dashboard.html
 │   ├── dashboard.js
 │   ├── dashboard.css
-│   └── dashboard_data.json   # Processed data consumed by the dashboard
+│   └── dashboard_data.json   # Processed data consumed by the dashboard, including summary statistics for metrics, time, and cost.
 └── # Other files/dirs (.git, .pytest_cache, tests/, etc.)
 ```
 
@@ -119,6 +117,7 @@ CadEval/
 6.  **Review `config.yaml`:**
     *   Verify the `openscad.executable_path`.
     *   Add/remove/modify LLM models under `llm.models`. Ensure providers match the API clients used in `scripts/generate_scad.py`.
+    *   Configure cost parameters for each model (e.g., `cost_per_input_token`, `cost_per_output_token` for LLMs; `cost_per_minute`, `free_tier_seconds` for `zoo_cli`). Use accurate pricing data.
     *   Adjust prompt templates under `prompts` if desired.
     *   Review geometry check thresholds under `geometry_check`.
     *   Set the desired `evaluation.num_replicates`.
@@ -166,7 +165,7 @@ CadEval/
 
 4.  **View Dashboard:**
     *   Open the `dashboard/dashboard.html` file in your web browser.
-    *   The dashboard loads data from `dashboard_data.json` and displays interactive charts and summary tables. Refresh the browser page after running `process_results.py` to see updated data.
+    *   The dashboard loads data from `dashboard_data.json` and displays interactive charts and summary tables. The dashboard now includes charts for average total generation time and estimated cost per model. Refresh the browser page after running `process_results.py` to see updated data.
 
 5.  **Run Unit Tests (Optional):**
     *   Ensure you have any development dependencies installed (if applicable, e.g., `pip install -r requirements-dev.txt` if it existed and contained `pytest`). You might need to install pytest directly: `pip install pytest`.
@@ -188,6 +187,23 @@ The `scripts/geometry_check.py` script performs the following evaluations on suc
 *   **Geometric Similarity (Chamfer Distance):** Calculates the Chamfer distance between generated and reference point clouds after ICP alignment (`geometry_check.chamfer_threshold_mm`). Lower is better.
 *   **Hausdorff Distance (95th & 99th Percentile):** Calculates percentile Hausdorff distances after alignment (`geometry_check.hausdorff_threshold_mm` applies to the 95p).
 *   **ICP Fitness:** Reports the alignment quality score from the Iterative Closest Point algorithm.
+
+---
+
+## Time & Cost Tracking
+
+In addition to geometric checks, the framework now tracks and estimates the time and cost associated with each generation attempt:
+
+*   **Time Tracking:**
+    *   **LLM Generation Time (`llm_duration_seconds`):** Measures the wall-clock time specifically for the API call to the LLM provider (e.g., OpenAI, Anthropic).
+    *   **Zoo CLI Generation Time (`generation_duration_seconds`):** Measures the wall-clock time for executing the `zoo ml text-to-cad export` command.
+    *   **Rendering Time (`render_duration_seconds`):** Measures the wall-clock time for OpenSCAD to render a `.scad` file into an `.stl` file.
+    *   **Total Time:** Calculated as the sum of generation time (LLM or Zoo) and rendering time (if applicable). The dashboard displays `Average Total Time (Gen + Render)`.
+
+*   **Cost Estimation:**
+    *   **LLM Cost:** Estimated based on token counts (`prompt_tokens`, `completion_tokens`) returned by the API and the pricing (`cost_per_input_token`, `cost_per_output_token`) defined for the model in `config.yaml`.
+    *   **Zoo CLI Cost:** Estimated based on the execution duration (`generation_duration_seconds`) and the pricing (`cost_per_minute`, `free_tier_seconds`) defined in `config.yaml`. A configurable free tier duration is subtracted before calculating cost.
+    *   The dashboard displays `Average Estimated Cost` per successful generation/render cycle.
 
 ---
 
