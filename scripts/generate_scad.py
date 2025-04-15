@@ -21,7 +21,7 @@ if parent_dir not in sys.path:
 from scripts.logger_setup import get_logger, setup_logger
 from scripts.config_loader import get_config, ConfigError
 from scripts.task_loader import load_tasks, TaskLoadError
-from scripts.llm_clients import create_llm_client, LLMError
+from scripts.llm_clients import create_llm_client, LLMError, BaseLLMClient
 
 # Initialize logger for this module
 logger = get_logger(__name__)
@@ -110,9 +110,10 @@ def generate_scad_for_task(
         return result
     
     # Create LLM client
+    client: Optional[BaseLLMClient] = None # Type hint
     try:
         client = create_llm_client(model_config)
-    except LLMError as e:
+    except (LLMError, ValueError) as e: # Catch ValueError from create_llm_client too
         error_msg = f"Failed to create LLM client for {provider}/{model_name}: {str(e)}"
         logger.error(error_msg)
         result["error"] = error_msg
@@ -129,33 +130,56 @@ def generate_scad_for_task(
         # --- Extract Token Usage --- Start ---
         prompt_tokens = None
         completion_tokens = None
+        raw_response = client.last_response # Client stores the raw response
+
         try:
-            # Access the underlying response object from the client call
-            # This requires the client's generate_text method to return the full response object
-            # or store it internally. Assuming client returns the full response for now.
-            # NOTE: This part might need adjustment based on how llm_clients actually return/store the response.
-            raw_response = client.last_response # Assuming client stores the raw response
             if client.provider == 'openai':
-                if hasattr(raw_response, 'usage') and raw_response.usage:
-                    prompt_tokens = raw_response.usage.prompt_tokens
-                    completion_tokens = raw_response.usage.completion_tokens
+                # Always use /v1/responses API structure: input/output tokens
+                try:
+                    if hasattr(raw_response, 'usage') and raw_response.usage:
+                        prompt_tokens = getattr(raw_response.usage, 'input_tokens', None)
+                        completion_tokens = getattr(raw_response.usage, 'output_tokens', None)
+                        if prompt_tokens is None or completion_tokens is None:
+                             logger.debug(f"OpenAI /v1/responses usage field lacks input/output tokens for {client.model_name}.")
+                    else:
+                         logger.debug(f"OpenAI /v1/responses object lacks usage data (or is empty) for {client.model_name}.")
+                except AttributeError:
+                    logger.warning(f"Token usage attribute ('usage') is missing in the response structure for OpenAI model {client.model_name} via /v1/responses API.")
             elif client.provider == 'anthropic':
-                 if hasattr(raw_response, 'usage') and raw_response.usage:
-                    prompt_tokens = raw_response.usage.input_tokens
-                    completion_tokens = raw_response.usage.output_tokens
+                 # Uses input/output tokens
+                 try:
+                     if hasattr(raw_response, 'usage') and raw_response.usage:
+                        prompt_tokens = getattr(raw_response.usage, 'input_tokens', None)
+                        completion_tokens = getattr(raw_response.usage, 'output_tokens', None)
+                        if prompt_tokens is None or completion_tokens is None:
+                             logger.warning(f"Could not find populated input/output tokens in usage object for Anthropic model {client.model_name}.")
+                     else:
+                         logger.warning(f"Could not find populated usage information in response object for Anthropic model {client.model_name}.")
+                 except AttributeError:
+                     logger.warning(f"Token usage attribute ('usage') is missing in the response structure for Anthropic model {client.model_name}.")
             elif client.provider == 'google':
-                 if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
-                    prompt_tokens = raw_response.usage_metadata.prompt_token_count
-                    # Sum tokens from all candidates (usually just one)
-                    completion_tokens = raw_response.usage_metadata.candidates_token_count
+                 # Uses usage_metadata with prompt_token_count / candidates_token_count
+                 try:
+                     if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
+                        prompt_tokens = getattr(raw_response.usage_metadata, 'prompt_token_count', None)
+                        completion_tokens = getattr(raw_response.usage_metadata, 'candidates_token_count', None)
+                        if prompt_tokens is None or completion_tokens is None:
+                             logger.warning(f"Could not find populated prompt/candidates token counts in usage_metadata for Google model {client.model_name}.")
+                     else:
+                         logger.warning(f"Could not find populated usage_metadata in response object for Google model {client.model_name}.")
+                 except AttributeError:
+                     logger.warning(f"Token usage attribute ('usage_metadata') is missing in the response structure for Google model {client.model_name}.")
 
             result["prompt_tokens"] = prompt_tokens
             result["completion_tokens"] = completion_tokens
-            logger.debug(f"Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}")
-        except AttributeError:
-            logger.warning(f"Could not find usage information in response object for {client.provider}. Client implementation might need update or response structure changed.")
+            if prompt_tokens is not None or completion_tokens is not None:
+                 logger.debug(f"Token Usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}")
+            else:
+                 logger.debug(f"Token Usage information was not available or found for {client.provider}/{client.model_name}.")
+
         except Exception as e:
-            logger.warning(f"Error extracting token usage for {client.provider}: {e}")
+            # Catch any other unexpected errors during token extraction
+            logger.warning(f"Unexpected error extracting token usage for {client.provider}/{client.model_name}: {e}", exc_info=True)
         # --- Extract Token Usage --- End ---
         
         # Check if the response is empty

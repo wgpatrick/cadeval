@@ -98,7 +98,7 @@ class BaseLLMClient:
         truncated_prompt = (prompt[:max_log_length] + "...") if len(prompt) > max_log_length else prompt
         
         logger.debug(f"LLM Request: {self.provider} | {self.model_name}")
-        logger.debug(f"Parameters: {json.dumps(params, indent=2)}")
+        logger.debug(f"Parameters: {json.dumps(params, indent=2, default=str)}")
         logger.debug(f"Prompt: {truncated_prompt}")
     
     def _log_response(self, response: str, duration: float) -> None:
@@ -116,240 +116,173 @@ class BaseLLMClient:
         logger.debug(f"LLM Response (after {duration:.2f}s): {truncated_response}")
 
 
-class OpenAIClient(BaseLLMClient):
+# --- Remove OpenAIClient and OpenAIReasoningClient ---
+
+# --- Add UnifiedOpenAIClient --- Start ---
+class UnifiedOpenAIClient(BaseLLMClient):
     """
-    Client wrapper for OpenAI API.
+    Unified client wrapper for OpenAI API using the Responses API (/v1/responses).
     """
-    
+
     def __init__(self, model_name: str, **kwargs):
         """
-        Initialize the OpenAI client.
-        
+        Initialize the unified OpenAI client.
+
         Args:
-            model_name: The specific OpenAI model to use
-            **kwargs: Additional model-specific parameters
+            model_name: The specific OpenAI model to use.
+            **kwargs: Additional model-specific parameters from config.
         """
-        super().__init__('openai', model_name, **kwargs)
-        
-        # Initialize OpenAI client
+        init_kwargs = kwargs.copy()
+        init_kwargs.pop('provider', None)
+        init_kwargs.pop('name', None)
+        super().__init__(provider='openai', model_name=model_name, **init_kwargs)
         self.client = OpenAI(api_key=self.api_key)
-        
-        # Set default parameters - store the intended max length generically
         self.default_params = {
+            'max_output_tokens': kwargs.get('max_tokens', kwargs.get('max_output_tokens', 8000)),
             'temperature': kwargs.get('temperature', 0.7),
-            '_max_output_length': kwargs.get('max_tokens', 1000), # Use internal name
             'top_p': kwargs.get('top_p', 1.0),
-            'frequency_penalty': kwargs.get('frequency_penalty', 0.0),
-            'presence_penalty': kwargs.get('presence_penalty', 0.0),
+            'reasoning': {
+                'effort': kwargs.get('effort', 'medium')
+            },
         }
-        # Add the correct max length parameter name based on model
-        if 'o1-' in self.model_name: # Heuristic check for o1 models
-             self.default_params['max_completion_tokens'] = self.default_params.pop('_max_output_length')
+        self.parameters.pop('max_tokens', None)
+        self.parameters.pop('frequency_penalty', None)
+        self.parameters.pop('presence_penalty', None)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((openai.APIError, openai.APIConnectionError, openai.RateLimitError, Timeout)),
+        reraise=True
+    )
+    def generate_text(self, prompt: str, **kwargs) -> str:
+        """
+        Generate text using OpenAI Responses API (/v1/responses).
+        Conditionally includes reasoning parameters based on model name.
+
+        Args:
+            prompt: The input prompt text.
+            **kwargs: Additional parameters for this specific request.
+
+        Returns:
+            The generated text response.
+
+        Raises:
+            LLMError: If text generation fails.
+        """
+        request_params = {**self.default_params, **kwargs}
+        if 'max_tokens' in kwargs:
+            request_params['max_output_tokens'] = kwargs['max_tokens']
+        request_params.pop('max_tokens', None)
+
+        # --- Conditionally adjust parameters based on model type --- Start ---
+        is_reasoning_model = self.model_name.startswith('o1') or self.model_name.startswith('o3')
+        
+        if is_reasoning_model:
+            # o1/o3 models DO support 'reasoning', but NOT temp/top_p via /v1/responses
+            if 'temperature' in request_params:
+                logger.debug(f"Model {self.model_name} does not support 'temperature' via /v1/responses. Removing it.")
+                del request_params['temperature']
+            if 'top_p' in request_params:
+                logger.debug(f"Model {self.model_name} does not support 'top_p' via /v1/responses. Removing it.")
+                del request_params['top_p']
         else:
-             self.default_params['max_tokens'] = self.default_params.pop('_max_output_length')
-    
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((openai.APIError, openai.APIConnectionError, openai.RateLimitError, Timeout)),
-        reraise=True
-    )
-    def generate_text(self, prompt: str, **kwargs) -> str:
-        """
-        Generate text using OpenAI API.
-        
-        Args:
-            prompt: The input prompt text
-            **kwargs: Additional parameters for this specific request
-        
-        Returns:
-            The generated text response
-            
-        Raises:
-            LLMError: If text generation fails
-        """
-        # Merge default parameters with request-specific ones
-        params = {**self.default_params, **kwargs}
-        
-        # Ensure the correct max length parameter is used based on the model
-        # (This handles overrides via kwargs as well)
-        max_len_param_name = 'max_completion_tokens' if 'o1-' in self.model_name else 'max_tokens'
-        if max_len_param_name == 'max_completion_tokens' and 'max_tokens' in params:
-            params['max_completion_tokens'] = params.pop('max_tokens')
-        elif max_len_param_name == 'max_tokens' and 'max_completion_tokens' in params:
-             params['max_tokens'] = params.pop('max_completion_tokens')
+            # Other models (e.g., gpt-4.1) support temp/top_p, but NOT 'reasoning' via /v1/responses
+            if 'reasoning' in request_params:
+                logger.debug(f"Model {self.model_name} does not support 'reasoning' parameter via /v1/responses. Removing it.")
+                del request_params['reasoning']
+        # --- Conditionally adjust parameters based on model type --- End ---
 
-        # Log the request (using the final parameters)
-        self._log_request(prompt, params)
-        
-        start_time = time.time()
-        try:
-            # Pass parameters dynamically
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                **params # Pass the prepared parameters dictionary
-            )
-            
-            generated_text = response.choices[0].message.content
-            self.last_response = response # Store the raw response
-            duration = time.time() - start_time
-            
-            # Log the response
-            self._log_response(generated_text, duration)
-            
-            return generated_text
-            
-        except openai.BadRequestError as e:
-             # Specific handling for bad requests which might include parameter issues
-             logger.error(f"OpenAI API BadRequestError: {str(e)}")
-             # Re-raise as LLMError for consistent handling upstream
-             raise LLMError(f"OpenAI API BadRequestError: {str(e)}")
-        except (openai.APIError, openai.APIConnectionError, openai.RateLimitError) as e:
-            logger.error(f"OpenAI API error: {str(e)}")
-            raise LLMError(f"OpenAI API error: {str(e)}")
+        self._log_request(prompt, request_params)
 
-
-class OpenAIReasoningClient(BaseLLMClient):
-    """
-    Client wrapper for OpenAI Reasoning models (o1, o3) using the Responses API.
-    """
-    
-    def __init__(self, model_name: str, **kwargs):
-        """
-        Initialize the OpenAI Reasoning client.
-        
-        Args:
-            model_name: The specific OpenAI reasoning model to use (e.g., o1, o3-mini)
-            **kwargs: Additional model-specific parameters (effort, max_output_tokens)
-        """
-        super().__init__('openai', model_name, **kwargs)
-        
-        # Initialize OpenAI client
-        self.client = OpenAI(api_key=self.api_key)
-        
-        # Set default parameters for the Responses API
-        self.default_params = {
-            'reasoning': {'effort': kwargs.get('effort', 'medium')},
-            # Note: max_output_tokens limits TOTAL tokens (reasoning + output)
-            'max_output_tokens': kwargs.get('max_output_tokens', kwargs.get('max_tokens', 10000)) # Use higher default if not specified
-        }
-        # Remove max_tokens if it was passed via kwargs from config designed for chat models
-        if 'max_tokens' in self.parameters:
-             del self.parameters['max_tokens']
-
-    
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((openai.APIError, openai.APIConnectionError, openai.RateLimitError, Timeout)),
-        reraise=True
-    )
-    def generate_text(self, prompt: str, **kwargs) -> str:
-        """
-        Generate text using OpenAI Responses API (for o1/o3 models).
-        
-        Args:
-            prompt: The input prompt text
-            **kwargs: Additional parameters for this specific request (effort, max_output_tokens)
-        
-        Returns:
-            The generated text response
-            
-        Raises:
-            LLMError: If text generation fails or is incomplete without output
-        """
-        # Merge default parameters with request-specific ones
-        params = {**self.default_params, **kwargs}
-        # Ensure nested 'reasoning' dict is handled correctly if passed in kwargs
-        if 'effort' in kwargs:
-            params['reasoning'] = {'effort': kwargs['effort']}
-            del params['effort'] # Remove top-level if present
-        
-        # Format input for the Responses API
-        input_messages = [{"role": "user", "content": prompt}]
-        
-        # Log the request (adjust logging if needed for different params)
-        log_params_for_display = {k: v for k, v in params.items()}
-        log_params_for_display['reasoning_effort'] = params.get('reasoning', {}).get('effort', 'default')
-        if 'reasoning' in log_params_for_display: del log_params_for_display['reasoning']
-        self._log_request(prompt, log_params_for_display)
-        
         start_time = time.time()
         try:
             response = self.client.responses.create(
                 model=self.model_name,
-                input=input_messages,
-                reasoning=params['reasoning'],
-                max_output_tokens=params['max_output_tokens']
+                input=[{"role": "user", "content": prompt}],
+                **request_params
             )
-            
-            duration = time.time() - start_time
-            
-            # Check response status
-            if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
-                error_msg = "Generation stopped due to max_output_tokens limit."
-                if response.output_text:
-                    logger.warning(f"{error_msg} Partial output returned.")
-                    # Log partial response
-                    self._log_response(response.output_text, duration)
-                    return response.output_text # Return partial text
-                else:
-                    error_msg += " No output generated (limit reached during reasoning)."
-                    logger.error(error_msg)
-                    raise LLMError(error_msg)
-            elif response.status != "completed":
-                 error_msg = f"Generation finished with unexpected status: {response.status}"
-                 logger.error(error_msg)
-                 raise LLMError(error_msg)
+            self.last_response = response # Store raw response immediately
 
-            generated_text = response.output_text
-            self.last_response = response # Store the raw response
-            
-            # Log the successful response
+            # --- Extract text - More Resilient --- Start ---
+            generated_text = ""
+            response_status = getattr(response, 'status', 'unknown')
+
+            if response_status != "completed":
+                logger.warning(f"OpenAI response status for {self.model_name} was '{response_status}', not 'completed'. Returning empty text.")
+                if hasattr(response, 'error') and response.error:
+                     logger.warning(f"Response error details: {response.error}")
+            else:
+                # Status is completed, attempt text extraction
+                try:
+                    # Attempt 1: Direct .output_text
+                    if hasattr(response, 'output_text') and response.output_text:
+                        generated_text = response.output_text
+                        logger.debug(f"Extracted text using response.output_text for {self.model_name}")
+                    # Attempt 2: Nested structure
+                    elif (response.output and
+                          isinstance(response.output, list) and len(response.output) > 0 and
+                          hasattr(response.output[0], 'content') and
+                          isinstance(response.output[0].content, list) and len(response.output[0].content) > 0 and
+                          hasattr(response.output[0].content[0], 'text')):
+                        generated_text = response.output[0].content[0].text
+                        logger.debug(f"Extracted text using response.output[0].content[0].text for {self.model_name}")
+                    else:
+                        # Status completed, but text structure not found - DO NOT RAISE ERROR
+                        logger.warning(f"OpenAI response status completed for {self.model_name}, but could not find text in expected structures (.output_text or .output[0].content[0].text). Returning empty text.")
+                        # Ensure generated_text remains ""
+                except (AttributeError, IndexError, TypeError) as e:
+                     # Error accessing attributes during extraction - DO NOT RAISE ERROR
+                     logger.warning(f"Error accessing text in completed OpenAI response structure for model {self.model_name}: {e}. Returning empty text.")
+                     # Ensure generated_text remains ""
+
+            # Log if empty text resulted
+            if not generated_text:
+                 logger.warning(f"Final extracted text is empty for OpenAI model {self.model_name}. Original response status was '{response_status}'.")
+            # --- Extract text - More Resilient --- End ---
+
+            duration = time.time() - start_time
             self._log_response(generated_text, duration)
-            
             return generated_text
-            
+
         except openai.BadRequestError as e:
-            logger.error(f"OpenAI API BadRequestError: {str(e)}")
-            raise LLMError(f"OpenAI API BadRequestError: {str(e)}")
+             logger.error(f"OpenAI API BadRequestError using /v1/responses: {str(e)}")
+             raise LLMError(f"OpenAI API BadRequestError: {str(e)}")
         except (openai.APIError, openai.APIConnectionError, openai.RateLimitError) as e:
-            logger.error(f"OpenAI API error: {str(e)}")
-            raise LLMError(f"OpenAI API error: {str(e)}")
-        except Timeout as e:
-            logger.error(f"Request to OpenAI API timed out: {str(e)}")
-            raise LLMError(f"Request to OpenAI API timed out: {str(e)}")
+            logger.error(f"OpenAI API error using /v1/responses: {str(e)}")
+            raise # Reraise for tenacity retry
         except Exception as e:
-            logger.error(f"Unexpected error with OpenAI Responses API: {str(e)}")
-            raise LLMError(f"Unexpected error with OpenAI Responses API: {str(e)}")
+            logger.error(f"Unexpected error calling OpenAI /v1/responses or processing its response: {str(e)}", exc_info=True)
+            # This catch block might be hit if unexpected errors occur OUTSIDE text extraction
+            raise LLMError(f"Unexpected error calling OpenAI /v1/responses or processing response: {str(e)}")
+# --- Add UnifiedOpenAIClient --- End ---
 
 
 class AnthropicClient(BaseLLMClient):
     """
     Client wrapper for Anthropic API.
     """
-    
+
     def __init__(self, model_name: str, **kwargs):
         """
         Initialize the Anthropic client.
-        
+
         Args:
             model_name: The specific Anthropic model to use
             **kwargs: Additional model-specific parameters
         """
-        super().__init__('anthropic', model_name, **kwargs)
-        
-        # Initialize Anthropic client
+        init_kwargs = kwargs.copy()
+        init_kwargs.pop('provider', None)
+        init_kwargs.pop('name', None)
+        super().__init__(provider='anthropic', model_name=model_name, **init_kwargs)
         self.client = anthropic.Anthropic(api_key=self.api_key)
-        
-        # Set default parameters
         self.default_params = {
+            'max_tokens': kwargs.get('max_tokens', 4000),
             'temperature': kwargs.get('temperature', 0.7),
-            'max_tokens': kwargs.get('max_tokens', 1000),
             'top_p': kwargs.get('top_p', 1.0),
         }
-    
+        self.parameters.pop('max_tokens', None) # Cleanup informational params
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -359,183 +292,238 @@ class AnthropicClient(BaseLLMClient):
     def generate_text(self, prompt: str, **kwargs) -> str:
         """
         Generate text using Anthropic API.
-        
+
         Args:
             prompt: The input prompt text
             **kwargs: Additional parameters for this specific request
-        
+
         Returns:
             The generated text response
-            
+
         Raises:
             LLMError: If text generation fails
         """
         # Merge default parameters with request-specific ones
         params = {**self.default_params, **kwargs}
-        
+
         # Log the request
         self._log_request(prompt, params)
-        
+
         start_time = time.time()
         try:
             response = self.client.messages.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=params['temperature'],
-                max_tokens=params['max_tokens'],
-                top_p=params['top_p'],
+                **params # Pass the prepared parameters dictionary
             )
+
+            # Extract text - handle potential empty content
+            generated_text = ""
+            if response.content and isinstance(response.content, list) and len(response.content) > 0:
+                 if hasattr(response.content[0], 'text'):
+                      generated_text = response.content[0].text
             
-            generated_text = response.content[0].text
+            if not generated_text:
+                 logger.warning(f"Could not extract text from Anthropic response for model {self.model_name}. Response: {response}")
+                 # Decide if empty response is error or valid
+                 # raise LLMError(f"Empty or unexpected response structure from Anthropic for model {self.model_name}")
+
             self.last_response = response # Store the raw response
             duration = time.time() - start_time
-            
+
             # Log the response
             self._log_response(generated_text, duration)
-            
+
             return generated_text
-            
+
+        except anthropic.BadRequestError as e:
+             logger.error(f"Anthropic API BadRequestError: {str(e)}")
+             raise LLMError(f"Anthropic API BadRequestError: {str(e)}")
         except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError) as e:
             logger.error(f"Anthropic API error: {str(e)}")
-            raise LLMError(f"Anthropic API error: {str(e)}")
-        except Timeout as e:
-            logger.error(f"Request to Anthropic API timed out: {str(e)}")
-            raise LLMError(f"Request to Anthropic API timed out: {str(e)}")
+            raise # Reraise the original exception for tenacity retry
         except Exception as e:
-            logger.error(f"Unexpected error with Anthropic API: {str(e)}")
-            raise LLMError(f"Unexpected error with Anthropic API: {str(e)}")
+            logger.error(f"Unexpected error calling Anthropic API: {str(e)}", exc_info=True)
+            raise LLMError(f"Unexpected error calling Anthropic API: {str(e)}")
 
 
 class GoogleAIClient(BaseLLMClient):
     """
-    Client wrapper for Google AI (Gemini) API.
+    Client wrapper for Google AI API (Gemini).
     """
-    
+
     def __init__(self, model_name: str, **kwargs):
         """
         Initialize the Google AI client.
-        
+
         Args:
-            model_name: The specific Google AI model to use
+            model_name: The specific Google model to use
             **kwargs: Additional model-specific parameters
         """
-        super().__init__('google', model_name, **kwargs)
-        
-        # Initialize Google AI client
+        init_kwargs = kwargs.copy()
+        init_kwargs.pop('provider', None)
+        init_kwargs.pop('name', None)
+        super().__init__(provider='google', model_name=model_name, **init_kwargs)
         genai.configure(api_key=self.api_key)
-        
-        # Set default parameters
-        self.default_params = {
-            'temperature': kwargs.get('temperature', 0.7),
-            'max_output_tokens': kwargs.get('max_tokens', 1000),
-            'top_p': kwargs.get('top_p', 1.0),
-            'top_k': kwargs.get('top_k', 40),
-        }
-    
+        self.client = genai.GenerativeModel(model_name)
+        self.default_config = genai.types.GenerationConfig(
+            candidate_count=kwargs.get('candidate_count', 1),
+            max_output_tokens=kwargs.get('max_tokens', 8192),
+            temperature=kwargs.get('temperature', 0.7),
+            top_p=kwargs.get('top_p', 1.0),
+        )
+        self.parameters.pop('max_tokens', None)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((RequestException, Timeout)),
+        # Use broader exceptions as specific Google AI API errors might vary
+        retry=retry_if_exception_type((RequestException, Timeout, genai.types.generation_types.BlockedPromptException, genai.types.generation_types.StopCandidateException)),
         reraise=True
     )
     def generate_text(self, prompt: str, **kwargs) -> str:
         """
-        Generate text using Google AI (Gemini) API.
-        
+        Generate text using Google AI API.
+
         Args:
             prompt: The input prompt text
-            **kwargs: Additional parameters for this specific request
-        
+            **kwargs: Additional generation config parameters for this request
+
         Returns:
             The generated text response
-            
+
         Raises:
             LLMError: If text generation fails
         """
-        # Merge default parameters with request-specific ones
-        params = {**self.default_params, **kwargs}
-        
-        # Log the request
-        self._log_request(prompt, params)
-        
+        # Create generation config for this request
+        # Start with defaults and update with kwargs
+        request_config_dict = {
+             'max_output_tokens': kwargs.get('max_tokens', self.default_config.max_output_tokens),
+             'temperature': kwargs.get('temperature', self.default_config.temperature),
+             'top_p': kwargs.get('top_p', self.default_config.top_p),
+             'candidate_count': kwargs.get('candidate_count', self.default_config.candidate_count),
+        }
+        # Filter out None values before creating GenerationConfig
+        filtered_config = {k: v for k, v in request_config_dict.items() if v is not None}
+        request_config = genai.types.GenerationConfig(**filtered_config)
+
+
+        # Log the request (approximate parameters)
+        self._log_request(prompt, filtered_config)
+
         start_time = time.time()
         try:
-            model = genai.GenerativeModel(
-                model_name=self.model_name,
-                generation_config={
-                    'temperature': params['temperature'],
-                    'max_output_tokens': params['max_output_tokens'],
-                    'top_p': params['top_p'],
-                    'top_k': params['top_k'],
-                }
+            response = self.client.generate_content(
+                prompt,
+                generation_config=request_config
             )
+
+            # Handle potential safety blocks or empty responses
+            if not response.candidates:
+                 block_reason = "Unknown"
+                 safety_ratings = []
+                 try:
+                     block_reason = response.prompt_feedback.block_reason.name
+                     safety_ratings = response.prompt_feedback.safety_ratings
+                 except AttributeError:
+                     pass # Keep default reason
+                 logger.error(f"Google AI generation blocked. Reason: {block_reason}, SafetyRatings: {safety_ratings}")
+                 raise LLMError(f"Google AI generation blocked. Reason: {block_reason}")
+
+            # Extract text, handling potential lack of text part
+            generated_text = ""
+            try:
+                generated_text = response.text
+            except ValueError as e:
+                # This can happen if the response is stopped early due to safety/length
+                logger.warning(f"Could not extract text from Google AI response (ValueError): {e}. Checking parts.")
+                try:
+                     if response.candidates and response.candidates[0].content.parts:
+                          generated_text = response.candidates[0].content.parts[0].text
+                          logger.info("Extracted text from response parts after initial ValueError.")
+                     else:
+                          logger.error("No usable text found in Google AI response parts after ValueError.")
+                          raise LLMError("No usable text found in Google AI response parts.")
+                except Exception as part_e:
+                     logger.error(f"Error extracting text from Google AI response parts: {part_e}")
+                     raise LLMError(f"Error extracting text from Google AI response parts: {part_e}")
             
-            response = model.generate_content(prompt)
-            generated_text = response.text
+            if not generated_text:
+                 logger.warning(f"Extracted empty text from Google AI response for model {self.model_name}")
+
             self.last_response = response # Store the raw response
             duration = time.time() - start_time
-            
+
             # Log the response
             self._log_response(generated_text, duration)
-            
+
             return generated_text
-            
-        except RequestException as e:
-            logger.error(f"Google AI API request error: {str(e)}")
-            raise LLMError(f"Google AI API request error: {str(e)}")
-        except Timeout as e:
-            logger.error(f"Request to Google AI API timed out: {str(e)}")
-            raise LLMError(f"Request to Google AI API timed out: {str(e)}")
+
+        except (RequestException, Timeout) as e:
+            logger.error(f"Network error calling Google AI API: {str(e)}")
+            raise # Reraise for tenacity
+        except genai.types.generation_types.BlockedPromptException as e:
+             logger.error(f"Google AI prompt blocked: {str(e)}")
+             raise LLMError(f"Google AI prompt blocked: {str(e)}")
+        except genai.types.generation_types.StopCandidateException as e:
+             logger.warning(f"Google AI generation stopped unexpectedly: {str(e)}")
+             # Attempt to return partial text if available
+             try:
+                 if e.candidate and hasattr(e.candidate, 'text'): return e.candidate.text
+                 elif e.candidate and e.candidate.content and e.candidate.content.parts:
+                      return e.candidate.content.parts[0].text
+                 else: raise LLMError(f"Google AI generation stopped with no recoverable text: {str(e)}")
+             except Exception as recovery_e:
+                  logger.error(f"Failed to recover partial text after StopCandidateException: {recovery_e}")
+                  raise LLMError(f"Google AI generation stopped with no recoverable text: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error with Google AI API: {str(e)}")
-            raise LLMError(f"Unexpected error with Google AI API: {str(e)}")
+            logger.error(f"Unexpected error calling Google AI API: {str(e)}", exc_info=True)
+            raise LLMError(f"Unexpected error calling Google AI API: {str(e)}")
 
 
 def create_llm_client(model_config: Dict[str, Any]) -> BaseLLMClient:
     """
-    Factory function to create an appropriate LLM client based on configuration.
-    
+    Factory function to create the appropriate LLM client based on provider.
+
     Args:
-        model_config: Dictionary containing model configuration
-                     Must include 'provider' and 'name' keys
-    
+        model_config: Dictionary containing model configuration (name, provider, etc.)
+
     Returns:
-        An instance of the appropriate LLM client
-        
+        An instance of the appropriate BaseLLMClient subclass.
+
     Raises:
-        LLMError: If the provider is not supported or configuration is invalid
+        ValueError: If the provider is unknown or unsupported, or config is invalid.
+        LLMError: If client initialization fails.
     """
     if not isinstance(model_config, dict):
-        raise LLMError("Model configuration must be a dictionary")
-    
+        raise ValueError("Model configuration must be a dictionary")
+
     provider = model_config.get('provider', '').lower()
-    model_name = model_config.get('name', '')
-    
-    if not provider or not model_name:
-        raise LLMError("Model configuration must include 'provider' and 'name'")
-    
-    # Extract parameters from config, excluding provider and name
-    params = {k: v for k, v in model_config.items() if k not in ['provider', 'name']}
-    
-    # Create the appropriate client based on provider
+    model_name = model_config.get('name')
+
+    if not provider:
+         raise ValueError("Model configuration must include a 'provider' key.")
+    if not model_name:
+        raise ValueError("Model configuration must include a 'name' key.")
+
+    # Pass the whole model_config as kwargs
+    params = model_config
+
     try:
         if provider == 'openai':
-            # Check if it's a reasoning model (o1/o3)
-            if model_name.startswith('o1') or model_name.startswith('o3'):
-                 logger.info(f"Detected OpenAI reasoning model: {model_name}. Using Responses API client.")
-                 return OpenAIReasoningClient(model_name, **params)
-            else:
-                 return OpenAIClient(model_name, **params) # Use standard ChatCompletion client
+            # Use the unified client for all OpenAI models
+            logger.info(f"Detected OpenAI provider. Using UnifiedOpenAIClient for model: {model_name}")
+            return UnifiedOpenAIClient(model_name=model_name, **params)
         elif provider == 'anthropic':
-            return AnthropicClient(model_name, **params)
+            return AnthropicClient(model_name=model_name, **params)
         elif provider == 'google':
-            return GoogleAIClient(model_name, **params)
+            return GoogleAIClient(model_name=model_name, **params)
         else:
-            raise LLMError(f"Unsupported LLM provider: {provider}")
-    except LLMError:
-        raise
+            raise ValueError(f"Unsupported LLM provider: {provider}")
     except Exception as e:
-        raise LLMError(f"Failed to create LLM client for {provider}: {str(e)}")
+        # Catch potential errors during client initialization (e.g., API key issues)
+        logger.error(f"Failed to initialize LLM client for {provider}/{model_name}: {e}", exc_info=True)
+        raise LLMError(f"Failed to initialize LLM client for {provider}/{model_name}: {e}")
 
 
 if __name__ == "__main__":

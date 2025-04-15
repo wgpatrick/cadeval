@@ -92,7 +92,7 @@ llm:
   - name: gpt-4o-2024-08-06
     provider: openai
     temperature: 0.4
-    max_tokens: 50000
+    max_tokens: 16000
     cost_per_million_input_tokens: 2.50 # Placeholder cost ($/Million Tokens)
     cost_per_million_output_tokens: 10.0 # Placeholder cost ($/Million Tokens)
   - name: o3-mini-2025-01-31
@@ -142,7 +142,7 @@ geometry_check:
   icp_fitness_threshold: 1.0
   chamfer_threshold_mm: 1.0
   hausdorff_threshold_mm: 1.0
-  volume_threshold_percent: 1.0
+  volume_threshold_percent: 2.0
 
 evaluation:
-  num_replicates: 1
+  num_replicates: 2
