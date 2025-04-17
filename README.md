@@ -174,6 +174,25 @@ CadEval/
         pytest
         ```
 
+### Running Evaluations in Parallel
+
+For significantly faster execution, especially with many tasks or replicates, you can use the parallel evaluation script `scripts/run_evaluation_parallel.py`. This script performs generation (LLM/Zoo), rendering, and geometry checks concurrently using multiple processes or threads.
+
+*   **Basic Usage:** It accepts the same arguments as `run_evaluation.py` (e.g., `--tasks`, `--models`, `--run-id`).
+    ```bash
+    python scripts/run_evaluation_parallel.py --tasks task_id_1 task_id_2 --models gpt-4o-mini
+    ```
+*   **Controlling Concurrency:** You can control the maximum number of parallel workers for different stages using:
+    *   `--max-workers-llm <N>`: Max threads for LLM API calls (Default: 10).
+    *   `--max-workers-zoo <N>`: Max processes for Zoo CLI calls (Default: Half CPU cores).
+    *   `--max-workers-render <N>`: Max processes for OpenSCAD rendering (Default: CPU cores).
+    *   `--max-workers-check <N>`: Max processes for Geometry Checks (Default: CPU cores).
+    *   Example: Reduce CPU load
+        ```bash
+        python scripts/run_evaluation_parallel.py --tasks task_id_1 --max-workers-render 4 --max-workers-check 4
+        ```
+*   **Output:** The parallel script produces the same `results/{run_id}/` structure, including the final `results_{run_id}.json`, compatible with `scripts/process_results.py`.
+
 ---
 
 ## Geometry Checks Performed
