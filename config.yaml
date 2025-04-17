@@ -61,10 +61,13 @@ llm:
   models:
   - name: claude-3-7-sonnet-20250219
     provider: anthropic
-    temperature: 0.4
-    max_tokens: 15000
+    temperature: 1.0
+    max_tokens: 15000 # Note: This might be overridden by the 128k context from beta
     cost_per_million_input_tokens: 3.0 # Placeholder cost ($/Million Tokens)
     cost_per_million_output_tokens: 15.0 # Placeholder cost ($/Million Tokens)
+    anthropic_extended_thinking_enabled: true
+    anthropic_thinking_budget_tokens: 2000
+    anthropic_betas: ["output-128k-2025-02-19"]
   - name: claude-3-5-sonnet-20241022
     provider: anthropic
     temperature: 0.4

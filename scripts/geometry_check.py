@@ -390,7 +390,7 @@ def compare_aligned_bounding_boxes(
     generated_stl_path: str,
     reference_stl_path: str,
     final_transform: np.ndarray, # Renamed parameter to reflect it's the final one
-    config: Config,
+    geometry_config: Dict[str, Any], # Expect geometry check config dictionary
     logger: logging.Logger
 ) -> Tuple[Optional[bool], Optional[List[float]], Optional[List[float]], Optional[str]]:
     """
@@ -402,8 +402,9 @@ def compare_aligned_bounding_boxes(
     ref_dims_sorted = None
     aligned_gen_dims_sorted = None
     try:
-        tolerance = config.get_required('geometry_check.bounding_box_tolerance_mm')
-        tolerance = float(tolerance)
+        # --- Get tolerance from geometry_config dictionary --- 
+        tolerance = float(geometry_config.get('bounding_box_tolerance_mm', 1.0))
+        # ------------------------------------------------------
         logger.debug(f"  Tolerance for aligned bbox check: +/- {tolerance} mm")
 
         # Load reference mesh and get its sorted dimensions
@@ -528,35 +529,23 @@ def perform_geometry_checks(
     generated_stl_path: str,
     reference_stl_path: str,
     task_requirements: Dict[str, Any],
-    rendering_info: Dict[str, Any],
-    config: Config
+    rendering_info: Optional[Dict[str, Any]],
+    geometry_config: Dict[str, Any] # Changed to expect a dictionary
 ) -> Dict[str, Any]:
     """
     Perform all geometry checks for a given generated STL file.
     """
     logger.info(f"----- Starting Geometry Checks for: {os.path.basename(generated_stl_path)} -----")
 
-    # --- Read Thresholds from Config ---
-    try:
-        # Get BBox tolerance (used in check_aligned_bounding_box)
-        bbox_tolerance_mm = config.get_required('geometry_check.bounding_box_tolerance_mm')
-        # Get Hausdorff threshold (used in check_similarity)
-        hausdorff_threshold_mm = config.get_required('geometry_check.hausdorff_threshold_mm')
-        # Get Volume threshold (used in check_volume)
-        volume_threshold_percent = config.get_required('geometry_check.volume_threshold_percent')
-        # Get Chamfer threshold (used in check_similarity) - Use CORRECT key
-        chamfer_threshold_mm = config.get_required('geometry_check.chamfer_threshold_mm')
-
-    except ConfigError as e:
-        logger.error(f"Configuration error reading geometry check thresholds: {e}")
-        # Return an error state or raise? Returning error state for now.
-        results = {"error": f"Config Error: {e}", "checks": {}} # Basic error structure
-        return results
-    except Exception as e:
-        logger.error(f"Unexpected error reading geometry check thresholds: {e}", exc_info=True)
-        results = {"error": f"Unexpected Config Error: {e}", "checks": {}} # Basic error structure
-        return results
-    # --- End Read Thresholds ---
+    # --- Get thresholds from geometry_config dictionary --- 
+    bbox_tolerance = float(geometry_config.get('bounding_box_tolerance_mm', 1.0))
+    chamfer_threshold = float(geometry_config.get('chamfer_threshold_mm', 1.0))
+    hausdorff_threshold = float(geometry_config.get('hausdorff_threshold_mm', 1.0))
+    icp_fitness_threshold = float(geometry_config.get('icp_fitness_threshold', 0.99))
+    expected_component_count = task_requirements.get('topology_requirements', {}).get('expected_component_count', 1)
+    # Retrieve volume threshold as a percentage (e.g., 2.0 for 2%)
+    volume_threshold_percent = float(geometry_config.get('volume_threshold_percent', 5.0))
+    # --- 
 
     # Initialize result structure
     results = {
@@ -655,7 +644,7 @@ def perform_geometry_checks(
             chamfer_dist, icp_fitness, final_transform, hausdorff_95p, hausdorff_99p, sim_error = check_similarity(
                  generated_stl_path,
                  reference_stl_path,
-                 chamfer_threshold_mm, # Pass threshold for potential internal use/logging
+                 chamfer_threshold, # Pass threshold for potential internal use/logging
                  logger
             )
             # Store raw values
@@ -666,10 +655,10 @@ def perform_geometry_checks(
 
             # Perform Hausdorff check using 95p
             if hausdorff_95p is not None and not np.isinf(hausdorff_95p):
-                is_hausdorff_passed = hausdorff_95p <= hausdorff_threshold_mm
+                is_hausdorff_passed = hausdorff_95p <= hausdorff_threshold
                 results["checks"]["check_hausdorff_passed"] = is_hausdorff_passed
                 if not is_hausdorff_passed:
-                    results["check_errors"].append(f"HausdorffCheck: 95p distance {hausdorff_95p:.4f} mm exceeds threshold {hausdorff_threshold_mm} mm")
+                    results["check_errors"].append(f"HausdorffCheck: 95p distance {hausdorff_95p:.4f} mm exceeds threshold {hausdorff_threshold} mm")
             else:
                 results["checks"]["check_hausdorff_passed"] = False # Treat None/inf as failure
                 if hausdorff_95p is None:
@@ -679,10 +668,10 @@ def perform_geometry_checks(
 
             # Perform Chamfer check using chamfer_dist
             if chamfer_dist is not None and not np.isinf(chamfer_dist):
-                is_chamfer_passed = chamfer_dist <= chamfer_threshold_mm
+                is_chamfer_passed = chamfer_dist <= chamfer_threshold
                 results["checks"]["check_chamfer_passed"] = is_chamfer_passed
                 if not is_chamfer_passed:
-                    results["check_errors"].append(f"ChamferCheck: Distance {chamfer_dist:.4f} mm exceeds threshold {chamfer_threshold_mm} mm")
+                    results["check_errors"].append(f"ChamferCheck: Distance {chamfer_dist:.4f} mm exceeds threshold {chamfer_threshold} mm")
             else:
                 results["checks"]["check_chamfer_passed"] = False # Treat None/inf as failure
                 if chamfer_dist is None:
@@ -718,7 +707,7 @@ def perform_geometry_checks(
                      generated_stl_path,
                      reference_stl_path,
                      final_transform,
-                     config, # Pass the whole config object
+                     geometry_config, # Pass the geometry_config dictionary
                      logger
                  )
                  results["checks"]["check_bounding_box_accurate"] = is_bbox_accurate
@@ -743,7 +732,7 @@ def perform_geometry_checks(
             is_volume_passed, ref_vol, gen_vol, vol_error = check_volume(
                  generated_stl_path,
                  reference_stl_path,
-                 volume_threshold_percent,
+                 volume_threshold_percent, # Pass the percentage value
                  logger
             )
             results["checks"]["check_volume_passed"] = is_volume_passed

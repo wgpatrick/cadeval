@@ -292,9 +292,10 @@ class AnthropicClient(BaseLLMClient):
     def generate_text(self, prompt: str, **kwargs) -> str:
         """
         Generate text using Anthropic API.
+        Uses the thinking parameter if enabled in config.
 
         Args:
-            prompt: The input prompt text
+            prompt: The input prompt text.
             **kwargs: Additional parameters for this specific request
 
         Returns:
@@ -303,48 +304,84 @@ class AnthropicClient(BaseLLMClient):
         Raises:
             LLMError: If text generation fails
         """
-        # Merge default parameters with request-specific ones
-        params = {**self.default_params, **kwargs}
+        # Merge default params with request-specific ones, prioritize request-specific
+        request_params = {**self.default_params, **kwargs}
+        # Construct message format for Anthropic
+        messages = [{"role": "user", "content": prompt}]
 
-        # Log the request
-        self._log_request(prompt, params)
+        # --- Check for Extended Thinking flags --- Start ---
+        use_extended_thinking = self.parameters.get('anthropic_extended_thinking_enabled', False)
+        thinking_budget = self.parameters.get('anthropic_thinking_budget_tokens')
+        # --- Check for Extended Thinking flags --- End ---
+
+        # Log request details (use the merged params)
+        self._log_request(prompt, request_params)
 
         start_time = time.time()
         try:
-            response = self.client.messages.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                **params # Pass the prepared parameters dictionary
-            )
+            # --- Select API endpoint based on flags --- Start ---
+            # Prepare call arguments
+            api_call_args = {
+                "model": self.model_name,
+                "messages": messages,
+                **request_params
+            }
 
-            # Extract text - handle potential empty content
+            # Conditionally add the thinking parameter
+            if use_extended_thinking and thinking_budget:
+                logger.debug(f"Adding 'thinking' parameter for {self.model_name}.")
+                # Ensure incompatible parameters are removed when thinking is enabled
+                api_call_args.pop('temperature', None) # Although API requires 1.0, removing might be safer than forcing 1.0 here
+                api_call_args.pop('top_p', None)
+                api_call_args.pop('top_k', None) # Remove top_k just in case it's added later
+
+                thinking_config = {
+                    "type": "enabled",
+                    "budget_tokens": int(thinking_budget) # Ensure it's an int
+                }
+                api_call_args["thinking"] = thinking_config
+            else:
+                if use_extended_thinking:
+                    logger.warning(f"Extended thinking enabled for {self.model_name}, but budget_tokens or betas missing in config. Using standard endpoint.")
+
+            # Always use the standard endpoint
+            logger.debug(f"Calling client.messages.create for {self.model_name}.")
+            response = self.client.messages.create(**api_call_args)
+            # --- Select API endpoint based on flags --- End ---
+
+            self.last_response = response # Store raw response
+
+            # Extract text content (handle potential list structure)
             generated_text = ""
-            if response.content and isinstance(response.content, list) and len(response.content) > 0:
-                 if hasattr(response.content[0], 'text'):
-                      generated_text = response.content[0].text
+            if response.content:
+                if isinstance(response.content, list):
+                    for block in response.content:
+                        if hasattr(block, 'text') and block.text:
+                            generated_text += block.text
+                elif hasattr(response.content, 'text') and response.content.text: # Should not happen based on docs, but safer
+                    generated_text = response.content.text
             
             if not generated_text:
-                 logger.warning(f"Could not extract text from Anthropic response for model {self.model_name}. Response: {response}")
-                 # Decide if empty response is error or valid
-                 # raise LLMError(f"Empty or unexpected response structure from Anthropic for model {self.model_name}")
+                 logger.warning(f"Anthropic response content was empty or text block not found for model {self.model_name}.")
 
-            self.last_response = response # Store the raw response
             duration = time.time() - start_time
-
-            # Log the response
             self._log_response(generated_text, duration)
-
             return generated_text
-
-        except anthropic.BadRequestError as e:
-             logger.error(f"Anthropic API BadRequestError: {str(e)}")
-             raise LLMError(f"Anthropic API BadRequestError: {str(e)}")
-        except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError) as e:
-            logger.error(f"Anthropic API error: {str(e)}")
-            raise # Reraise the original exception for tenacity retry
+        except anthropic.APIStatusError as e:
+            logger.error(f"Anthropic API status error: {str(e)}")
+            raise LLMError(f"Anthropic API error: {str(e)}") from e
+        except anthropic.APIConnectionError as e:
+            logger.error(f"Anthropic API connection error: {str(e)}")
+            raise LLMError(f"Anthropic connection error: {str(e)}") from e
+        except anthropic.RateLimitError as e:
+            logger.error(f"Anthropic rate limit exceeded: {str(e)}")
+            raise LLMError(f"Anthropic rate limit error: {str(e)}") from e
+        except anthropic.APIError as e:
+            logger.error(f"General Anthropic API error: {str(e)}")
+            raise LLMError(f"Anthropic API error: {str(e)}") from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Anthropic API: {str(e)}", exc_info=True)
-            raise LLMError(f"Unexpected error calling Anthropic API: {str(e)}")
+            logger.error(f"Unexpected error during Anthropic call: {e}", exc_info=True)
+            raise LLMError(f"Unexpected error during Anthropic call: {e}") from e
 
 
 class GoogleAIClient(BaseLLMClient):
