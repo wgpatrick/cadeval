@@ -320,7 +320,8 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
         'zoo': 'rgba(255, 206, 86, 0.6)',      // Yellow
         'chatgpt': 'rgba(75, 192, 192, 0.6)',  // Teal - OpenAI (fallback)
         'o1': 'rgba(75, 192, 192, 0.6)',       // Teal - OpenAI (fallback)
-        'o3': 'rgba(75, 192, 192, 0.6)'        // Teal - OpenAI (fallback)
+        'o3': 'rgba(75, 192, 192, 0.6)',        // Teal - OpenAI (fallback)
+        'o4': 'rgba(75, 192, 192, 0.6)'         // Teal - OpenAI (fallback)
     };
 
     // Default colors for unknown providers
@@ -346,7 +347,8 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
         if (modelLower.startsWith('gpt') || 
             modelLower.startsWith('chatgpt') || 
             modelLower.startsWith('o1') || 
-            modelLower.startsWith('o3')) {
+            modelLower.startsWith('o3') ||
+            modelLower.startsWith('o4')) {
             return 'openai';
         }
         

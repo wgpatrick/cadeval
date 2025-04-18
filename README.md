@@ -251,6 +251,8 @@ Potential areas for future development and improvement of this evaluation framew
     *   **Adding Operations:** Evaluate the ability of LLMs to add new features (holes, extrusions, etc.) to existing valid OpenSCAD code or STL models based on text instructions.
     *   **Editing/Fixing:** Assess how well models can correct errors or modify specific features in existing SCAD code based on feedback or new requirements.
 *   **STL-to-STL Evaluation:** Evaluate the direct ability of models (like Zoo ML) to generate an STL file that closely matches a reference STL, potentially using different metrics or comparison techniques.
+*   **Optimize & Track Reasoning Tokens:** Initial tests suggest Anthropic's `thinking.budget_tokens` significantly impacts performance (e.g., 2500 might be better than 10000), requiring further optimization. Additionally, incorporate tracking for reasoning/thinking tokens used by Anthropic, OpenAI (o-series), and potentially Google models to better understand reasoning cost/benefit.
+*   **Provider-Specific Rate Limiting:** High concurrency (e.g., `--max-workers-llm 10`) can trigger rate limits (HTTP 429 errors) with providers like Anthropic. While reducing workers (e.g., `--max-workers-llm 3`) helps, future improvements could include provider-specific worker limits or more sophisticated rate-limiting logic within the LLM clients (e.g., respecting `Retry-After` headers, token bucket algorithms).
 
 ---
 

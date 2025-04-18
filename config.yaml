@@ -66,7 +66,7 @@ llm:
     cost_per_million_input_tokens: 3.0 # Placeholder cost ($/Million Tokens)
     cost_per_million_output_tokens: 15.0 # Placeholder cost ($/Million Tokens)
     anthropic_extended_thinking_enabled: true
-    anthropic_thinking_budget_tokens: 2000
+    anthropic_thinking_budget_tokens: 2500
     anthropic_betas: ["output-128k-2025-02-19"]
   - name: claude-3-5-sonnet-20241022
     provider: anthropic
@@ -86,6 +86,18 @@ llm:
     max_tokens: 4000
     cost_per_million_input_tokens: 0.25 # Placeholder cost ($/Million Tokens)
     cost_per_million_output_tokens: 1.25 # Placeholder cost ($/Million Tokens)
+  - name: o3-2025-04-16
+    provider: openai
+    temperature: 0.4
+    max_tokens: 15000
+    cost_per_million_input_tokens: 10.0 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 40.0 # Placeholder cost ($/Million Tokens)
+  - name: o4-mini-2025-04-16
+    provider: openai
+    temperature: 0.4
+    max_tokens: 15000
+    cost_per_million_input_tokens: 1.1 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 4.4 # Placeholder cost ($/Million Tokens)
   - name: o1-2024-12-17
     provider: openai
     temperature: 0.4
@@ -148,4 +160,4 @@ geometry_check:
   volume_threshold_percent: 2.0
 
 evaluation:
-  num_replicates: 1
+  num_replicates: 4

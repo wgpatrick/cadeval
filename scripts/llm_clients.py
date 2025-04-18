@@ -176,9 +176,10 @@ class UnifiedOpenAIClient(BaseLLMClient):
         request_params.pop('max_tokens', None)
 
         # --- Conditionally adjust parameters based on model type --- Start ---
-        is_reasoning_model = self.model_name.startswith('o1') or self.model_name.startswith('o3')
-        
-        if is_reasoning_model:
+        # Models starting with 'o' (e.g., o1, o3, o4) don't support temp/top_p via /v1/responses
+        is_o_model = self.model_name.startswith('o')
+
+        if is_o_model:
             # o1/o3 models DO support 'reasoning', but NOT temp/top_p via /v1/responses
             if 'temperature' in request_params:
                 logger.debug(f"Model {self.model_name} does not support 'temperature' via /v1/responses. Removing it.")
