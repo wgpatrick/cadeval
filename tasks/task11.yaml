@@ -3,7 +3,7 @@ description: "We're making an eye bolt. The eyebolt is a torus with a cylinder e
 
 1: For the torus, the inner diameter is 20mm and the outer diameter is 30mm. 
 
-2: For the cylindrical shank, the length is 50mm and the diameter is 5mm. The shank emerges orthogonally out from the torus. 
+2: For the cylindrical shank, the length is 50mm and the diameter is 5mm.  
 
 3: At the end of the shank, away from from the torus, add a 1mm chamfer on the bottom edge of the shank. 
 

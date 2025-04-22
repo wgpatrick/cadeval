@@ -742,7 +742,6 @@ def main():
         "direct_stl_generation_results": direct_stl_generation_results, # Zoo results
         "render_results": render_results, 
         "check_results_map": check_results_map, # Map: generated_stl_path -> check_result_dict
-        "stl_path_to_gen_info": stl_path_to_gen_info, # Map: generated_stl_path -> original_gen_info_dict
         # Pass logger instance (get it again just in case)
         "logger": get_logger(__name__),
         "project_root": project_root # Pass project root for path resolution

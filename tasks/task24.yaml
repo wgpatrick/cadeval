@@ -7,7 +7,7 @@ description: "This is a L block used for work holding while machining. I'll help
 
 3. Next add 4 holes that cut through the piece in the Z dimension. If you're looking at the bottom pieces, there will be a hole in each corner of the rectangle. The holes are 6mm in diameter. The center of each hole is 8mm from both edges in the corner. The hole should go through the entire piece (it will need to cut higher through the piece in order to cut through the part we extruded in 2)
 
-4. Next we're going to add a counterbore to the 2 holes that are currently going through the taller section created from the extruded rectangle (made in 2). The counterbore is 12mm in diameter and has a depth of 20mm
+4. Next we're going to add a counterbore to the 2 holes that are currently going through the taller section created from the extruded rectangle (made in 2). The counterbore is 12mm in diameter and has a depth of 20mm. We are counterboring the holes only on the bottom of the piece, not the top of the piece. 
 
 5. Finally, on top of the piece we're going to add another extruded prism. The extruded piece is 5 mm (X) by 50mm (Y) and is extruded up 20mm (Z). It's positioned at x = 30, just to the left of the two holes that emerge from the top of the bracket. "
 reference_stl: "./reference/task24.stl" # Path relative to project root, ensure the STL file exists here.

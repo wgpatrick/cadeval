@@ -204,7 +204,7 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
             datasets[promptKey].renderSuccessRate.push({
                 value: chart2Value,
                 successCount: chart2SuccessCount, // Use potentially corrected count
-                totalCount: reliableTotalCountForPrompt // Use the determined reliable count
+                totalCount: stats?.total_count || 0 // Use total_count from specific stats
             });
             // --- Chart 2: STL Render Success Rate (%) --- END ---
             
@@ -844,7 +844,7 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
         modelCaption.textContent = 'Model Performance Summary';
 
         const modelHeader = modelTable.createTHead().insertRow();
-        const modelHeaders = ['Model', 'Prompt', 'Overall Pass (%)', 'SCAD Gen (%)', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
+        const modelHeaders = ['Model', 'Prompt', 'Total Tasks', 'Overall Pass (%)', 'Total Passes', 'SCAD Gen (%)', 'SCAD Gen Success', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
         modelHeaders.forEach(text => {
             const th = document.createElement('th');
             th.textContent = text;
@@ -857,8 +857,11 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
                 const row = modelBody.insertRow();
                 row.insertCell().textContent = modelName;
                 row.insertCell().textContent = promptKey;
+                row.insertCell().textContent = stats.total_replicates ?? 'N/A';
                 row.insertCell().textContent = fmtTable(stats.overall_pass_rate, '%');
+                row.insertCell().textContent = stats.overall_pass_count ?? 'N/A';
                 row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%');
+                row.insertCell().textContent = stats.scad_generation_success_count ?? 'N/A';
                 row.insertCell().textContent = fmtTable(stats.render_success_rate, '%');
                 row.insertCell().textContent = stats.checks_run_count ?? 'N/A';
                 row.insertCell().textContent = fmtTable(stats.chamfer_pass_rate, '%');

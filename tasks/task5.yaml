@@ -1,5 +1,5 @@
 task_id: "task5" # e.g., widget_01, bracket_complex_v2
-description: "This is a rectangular prism (a 50x50mm square extruded by 100mm) that has a half-circle (diameter 25mm) channel on one of the 4 long sides of the prism."
+description: "This is a rectangular prism (a 50x50mm square extruded by 100mm). The prism has a half-circle (diameter 25mm) channel (100mm long) on one of the 4 long sides of the prism. The channel is centered on the side (12.5mm from the channel edge to the side of the prism)."
 reference_stl: "./reference/task5.stl" # Path relative to project root, ensure the STL file exists here.
 requirements:
   bounding_box: [50, 50, 100] # Reverted to original
