@@ -57,6 +57,41 @@ function formatDetailText(value) {
     return (value !== null && typeof value !== 'undefined') ? value : 'N/A';
 }
 
+// --- >>> PASTE getProvider function here <<< ---
+// Extract provider from model name with special handling for OpenAI models
+function getProvider(modelName) {
+    // Convert to lowercase for case-insensitive matching
+    const modelLower = modelName.toLowerCase();
+    
+    // Check for Claude models
+    if (modelLower.includes('claude')) {
+        return 'claude';
+    }
+    
+    // Check for OpenAI models with various prefixes
+    if (modelLower.startsWith('gpt') || 
+        modelLower.startsWith('chatgpt') || 
+        modelLower.startsWith('o1') || 
+        modelLower.startsWith('o3') ||
+        modelLower.startsWith('o4')) {
+        return 'openai';
+    }
+    
+    // Check for Gemini models
+    if (modelLower.includes('gemini')) {
+        return 'gemini';
+    }
+    
+    // Check for Zoo models
+    if (modelLower.includes('zoo')) {
+        return 'zoo';
+    }
+    
+    // Default: just use the first part before hyphen
+    return modelLower.split('-')[0];
+}
+// --- >>> END PASTE <<< ---
+
 // --- Cell Renderers for AG-Grid ---
 function booleanStatusCellRenderer(params) {
     const status = formatBooleanText(params.value);
@@ -185,28 +220,11 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
             // --- Chart 2: STL Render Success Rate (%) --- START ---
             let chart2SuccessCount = renderSuccessCount;
             let chart2Value = stats?.render_success_rate ?? NaN;
-
-            // Special handling for zoo-ml-text-to-cad
-            if (modelName.includes('zoo-ml-text-to-cad')) {
-                // If render_success_count is 0 but checks_run_count > 0, use checks_run_count
-                if (chart2SuccessCount === 0 && checksRunCount > 0) {
-                    console.log(`Correcting renderSuccessCount for ${modelName} (${promptKey}) using checksRunCount (${checksRunCount})`);
-                    chart2SuccessCount = checksRunCount;
-                    // Recalculate rate if possible
-                    if (reliableTotalCountForPrompt > 0) {
-                        chart2Value = (chart2SuccessCount / reliableTotalCountForPrompt) * 100;
-                    } else {
-                        chart2Value = NaN; // Cannot calculate rate without a valid total
-                    }
-                }
-            }
-
             datasets[promptKey].renderSuccessRate.push({
                 value: chart2Value,
-                successCount: chart2SuccessCount, // Use potentially corrected count
-                totalCount: stats?.total_count || 0 // Use total_count from specific stats
+                successCount: chart2SuccessCount,
+                totalCount: reliableTotalCountForPrompt
             });
-            // --- Chart 2: STL Render Success Rate (%) --- END ---
             
             // Chart 3: Success rate if STL rendered
             let checksSuccessRate = NaN;
@@ -332,39 +350,6 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
         'rgba(255, 99, 132, 0.6)',  // Pink
         'rgba(0, 204, 150, 0.6)'    // Green
     ];
-
-    // Extract provider from model name with special handling for OpenAI models
-    function getProvider(modelName) {
-        // Convert to lowercase for case-insensitive matching
-        const modelLower = modelName.toLowerCase();
-        
-        // Check for Claude models
-        if (modelLower.includes('claude')) {
-            return 'claude';
-        }
-        
-        // Check for OpenAI models with various prefixes
-        if (modelLower.startsWith('gpt') || 
-            modelLower.startsWith('chatgpt') || 
-            modelLower.startsWith('o1') || 
-            modelLower.startsWith('o3') ||
-            modelLower.startsWith('o4')) {
-            return 'openai';
-        }
-        
-        // Check for Gemini models
-        if (modelLower.includes('gemini')) {
-            return 'gemini';
-        }
-        
-        // Check for Zoo models
-        if (modelLower.includes('zoo')) {
-            return 'zoo';
-        }
-        
-        // Default: just use the first part before hyphen
-        return modelLower.split('-')[0];
-    }
 
     // Create Chart.js datasets with sorting and provider-based coloring
     const createChartDatasets = (metricKey, labelPrefix) => {
@@ -844,7 +829,8 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
         modelCaption.textContent = 'Model Performance Summary';
 
         const modelHeader = modelTable.createTHead().insertRow();
-        const modelHeaders = ['Model', 'Prompt', 'Total Tasks', 'Overall Pass (%)', 'Total Passes', 'SCAD Gen (%)', 'SCAD Gen Success', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
+        // Add "Render Success", reorder slightly
+        const modelHeaders = ['Model', 'Prompt', 'Total Tasks', 'Overall Pass (%)', 'Total Passes', 'SCAD Gen (%)', 'SCAD Gen Success', 'Render (%)', 'Render Success', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
         modelHeaders.forEach(text => {
             const th = document.createElement('th');
             th.textContent = text;
@@ -852,17 +838,29 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
         });
 
         const modelBody = modelTable.createTBody();
+        // Assuming getProvider function is accessible here or defined globally/earlier
+        // If not, you might need to pass it or redefine it.
         for (const [modelName, promptData] of Object.entries(metaStatistics)) {
+            const provider = getProvider(modelName); // Determine provider
+
             for (const [promptKey, stats] of Object.entries(promptData)) {
                 const row = modelBody.insertRow();
                 row.insertCell().textContent = modelName;
                 row.insertCell().textContent = promptKey;
-                row.insertCell().textContent = stats.total_replicates ?? 'N/A';
+                row.insertCell().textContent = stats.total_replicates ?? 'N/A'; // Total Tasks
                 row.insertCell().textContent = fmtTable(stats.overall_pass_rate, '%');
-                row.insertCell().textContent = stats.overall_pass_count ?? 'N/A';
-                row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%');
-                row.insertCell().textContent = stats.scad_generation_success_count ?? 'N/A';
-                row.insertCell().textContent = fmtTable(stats.render_success_rate, '%');
+                row.insertCell().textContent = stats.overall_pass_count ?? 'N/A'; // Total Passes
+
+                // --- SCAD Gen Columns ---
+                // Display N/A for Zoo, otherwise format value
+                row.insertCell().textContent = (provider === 'zoo') ? 'N/A' : fmtTable(stats.scad_generation_success_rate, '%');
+                row.insertCell().textContent = (provider === 'zoo') ? 'N/A' : (stats.scad_generation_success_count ?? 'N/A');
+
+                // --- Render Columns ---
+                row.insertCell().textContent = fmtTable(stats.render_success_rate, '%'); // Now includes Zoo success
+                row.insertCell().textContent = stats.render_success_count ?? 'N/A'; // Add Render Success count
+
+                // --- Remaining Columns ---
                 row.insertCell().textContent = stats.checks_run_count ?? 'N/A';
                 row.insertCell().textContent = fmtTable(stats.chamfer_pass_rate, '%');
                 row.insertCell().textContent = fmtTable(stats.hausdorff_pass_rate, '%');
@@ -876,7 +874,7 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
         container.innerHTML += '<p>No model summary statistics available.</p>';
     }
 
-    // -- Task Summary Table --
+    // -- Task Summary Table -- (Ensure getProvider is defined/accessible if needed here too, although Task table doesn't show SCAD/Render % currently)
     if (taskStatistics && Object.keys(taskStatistics).length > 0) {
         const taskTable = document.createElement('table');
         taskTable.className = 'summary-table'; // Add class for styling
@@ -885,7 +883,23 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
         taskTable.style.marginTop = '20px'; // Add some space between tables
 
         const taskHeader = taskTable.createTHead().insertRow();
-        const taskHeaders = ['Task ID', 'Overall Pass (%)', 'SCAD Gen (%)', 'Render (%)', 'Checks Run', 'Chamfer Pass (%)', 'Haus. Pass (%)', 'Vol. Pass (%)', 'Avg Chamfer (mm)', 'Avg Haus. 95p (mm)'];
+        // Define headers including new counts and updated names
+        const taskHeaders = [
+            'Task ID',
+            'Total Replicates', // NEW
+            'Overall Pass (%)',
+            'Overall Passes',   // NEW
+            'SCAD Gen (%) (Non-Zoo)', // Updated Name
+            'SCAD Gen Success', // NEW
+            'SCAD Render Success (%)', // Updated Name
+            'SCAD Render Success', // NEW
+            'Checks Run',
+            'Chamfer Pass (%)',
+            'Haus. Pass (%)',
+            'Vol. Pass (%)',
+            'Avg Chamfer (mm)',
+            'Avg Haus. 95p (mm)'
+        ];
         taskHeaders.forEach(text => {
             const th = document.createElement('th');
             th.textContent = text;
@@ -894,14 +908,18 @@ function renderSummaryTables(metaStatistics, taskStatistics) {
 
         const taskBody = taskTable.createTBody();
         // Sort tasks for consistent order (optional)
-        const sortedTaskIds = Object.keys(taskStatistics).sort(); 
+        const sortedTaskIds = Object.keys(taskStatistics).sort();
         for (const taskId of sortedTaskIds) {
             const stats = taskStatistics[taskId];
             const row = taskBody.insertRow();
             row.insertCell().textContent = taskId;
+            row.insertCell().textContent = stats.total_replicates ?? 'N/A'; // NEW: Total Replicates
             row.insertCell().textContent = fmtTable(stats.overall_pass_rate, '%');
-            row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%');
-            row.insertCell().textContent = fmtTable(stats.render_success_rate, '%');
+            row.insertCell().textContent = stats.overall_pass_count ?? 'N/A'; // NEW: Overall Passes
+            row.insertCell().textContent = fmtTable(stats.scad_generation_success_rate, '%'); // Uses corrected rate
+            row.insertCell().textContent = stats.scad_generation_success_count ?? 'N/A'; // NEW: SCAD Gen Success count
+            row.insertCell().textContent = fmtTable(stats.scad_render_success_rate, '%'); // Uses new corrected rate
+            row.insertCell().textContent = stats.non_zoo_render_success_count ?? 'N/A'; // NEW: SCAD Render Success count
             row.insertCell().textContent = stats.checks_run_count ?? 'N/A'; // Direct count
             row.insertCell().textContent = fmtTable(stats.chamfer_pass_rate, '%');
             row.insertCell().textContent = fmtTable(stats.hausdorff_pass_rate, '%');

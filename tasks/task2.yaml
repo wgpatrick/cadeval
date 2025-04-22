@@ -3,7 +3,7 @@ description: "This is a 3mm thickness rectangular plate with two holes.
 
 1. The plate is 18mm x 32mm in dimension. 
 
-2. When looking down at the plate, it has two holes that are drilled through it. In the bottom left of the plate, there's a hole with a centerpoint that is 3mm from the short (18mm) side and 3 mm from the long (32mm) side. This hole has a diameter of 2mm. 
+2. When looking down at the plate, it has two holes that are drilled through it. In the bottom left of the plate, there's a hole with a center point that is 3mm from the short (18mm) side and 3 mm from the long (32mm) side. This hole has a diameter of 2mm. 
 
 3. In roughly the top left corner of plate, there's a hole of diameter 3mm. Its center point is 8mm from the short side (18mm side) and 6mm away from the long (32mm) side."
 reference_stl: "./reference/task2.stl" # Path relative to project root, ensure the STL file exists here.

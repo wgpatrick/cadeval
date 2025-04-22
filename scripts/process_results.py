@@ -434,8 +434,10 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
     }))
     task_stats = defaultdict(lambda: {
         "total_replicates": 0,
+        "non_zoo_replicates": 0, # NEW: Count non-zoo attempts for task denominators
         "scad_generation_success_count": 0,
-        "render_success_count": 0,
+        "render_success_count": 0, # Counts ANY successful STL (render or zoo gen)
+        "non_zoo_render_success_count": 0, # NEW: Count successful SCAD renders only
         "checks_run_count": 0,
         "overall_pass_count": 0,
         "watertight_pass_count": 0,
@@ -453,7 +455,8 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
     for entry in processed_data:
         model_name = entry.get("model_name")
         task_id = entry.get("task_id")
-        prompt_key = entry.get("prompt_key", "default") # Get the prompt key used
+        prompt_key = entry.get("prompt_key_used", "default") # Use prompt_key_used
+        provider = entry.get("provider") # Get provider for checks
 
         if not model_name or not task_id:
             logger.warning(f"Skipping entry with missing model_name or task_id: {entry}")
@@ -467,13 +470,33 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
         m_stat["total_replicates"] += 1
         t_stat["total_replicates"] += 1
 
+        # Increment non-zoo count if applicable
+        is_non_zoo = provider != 'zoo_cli'
+        if is_non_zoo:
+            t_stat["non_zoo_replicates"] += 1
+
         # Increment success counts based on boolean flags
-        if entry.get("scad_gen_success") is True:
+        # --- Modified SCAD Gen Count ---
+        if entry.get("scad_gen_success") is True and is_non_zoo: # Only count for non-zoo
             m_stat["scad_generation_success_count"] += 1
-            t_stat["scad_generation_success_count"] += 1
-        if entry.get("render_success") is True:
+            t_stat["scad_generation_success_count"] += 1 # This remains the same numerator
+
+        # --- Modified Render Success Count ---
+        # Condition: EITHER non-Zoo render succeeded OR Zoo generation succeeded
+        is_non_zoo_render_success = is_non_zoo and entry.get("render_success") is True
+        # For Zoo, success means the generation itself succeeded (as there's no separate render step)
+        is_zoo_gen_success = provider == 'zoo_cli' and entry.get("scad_gen_success") is True # Use scad_gen_success for Zoo
+
+        # Count ANY successful STL generation/render
+        if is_non_zoo_render_success or is_zoo_gen_success:
             m_stat["render_success_count"] += 1
             t_stat["render_success_count"] += 1
+
+        # NEW: Count only successful SCAD renders
+        if is_non_zoo_render_success:
+            t_stat["non_zoo_render_success_count"] += 1
+
+        # --- Overall Pass Count (unmodified for now) ---
         if entry.get("overall_passed") is True:
             m_stat["overall_pass_count"] += 1
             t_stat["overall_pass_count"] += 1
@@ -592,36 +615,40 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
                 for prompt_key, stats in primary_value.items():
                     # Process the individual stat dict (same logic as before)
                     total_reps = stats["total_replicates"]
+                    # Note: non_zoo_replicates is not tracked per model/prompt here
+                    # So model SCAD Gen % is relative to total reps for that model/prompt
+                    scad_gen_success_count = stats["scad_generation_success_count"]
+                    render_success_count = stats["render_success_count"] # Any STL success
+                    overall_pass_count = stats["overall_pass_count"]
                     checks_run = stats["checks_run_count"]
-                    final = stats.copy()
-                    # Calculate rates
-                    final["scad_generation_success_rate"] = (stats["scad_generation_success_count"] / total_reps * 100) if total_reps > 0 else 0
-                    final["render_success_rate"] = (stats["render_success_count"] / total_reps * 100) if total_reps > 0 else 0
-                    final["overall_pass_rate"] = (stats["overall_pass_count"] / total_reps * 100) if total_reps > 0 else 0
+                    final = stats.copy() # Copy accumulated counts and metrics lists
+
+                    # Calculate rates relative to total replicates for this model/prompt
+                    final["scad_generation_success_rate"] = (scad_gen_success_count / total_reps * 100) if total_reps > 0 else 0
+                    final["render_success_rate"] = (render_success_count / total_reps * 100) if total_reps > 0 else 0 # Any STL success rate
+                    final["overall_pass_rate"] = (overall_pass_count / total_reps * 100) if total_reps > 0 else 0
+
+                    # Check pass rates remain relative to checks_run for this model/prompt
                     final["watertight_pass_rate"] = (stats["watertight_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                     final["single_comp_pass_rate"] = (stats["single_comp_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                     final["bbox_acc_pass_rate"] = (stats["bbox_acc_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                     final["volume_pass_rate"] = (stats["volume_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                     final["hausdorff_pass_rate"] = (stats["hausdorff_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                     final["chamfer_pass_rate"] = (stats["chamfer_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+
                     # Calculate metric statistics
                     for metric, values in stats["metrics"].items():
-                        # --- Add mapping for time metrics --- Start ---
                         metric_key_map = {
                             "time_gen": "generation_time_seconds",
                             "time_render": "render_time_seconds",
                             "total_time": "total_time_seconds",
                             "chamfer_dist": "chamfer",
                             "haus_95p_dist": "hausdorff_95p",
-                            # --- Add cost/token mappings ---
                             "estimated_cost": "estimated_cost",
                             "prompt_tokens": "prompt_tokens",
                             "completion_tokens": "completion_tokens"
                         }
-                        metric_name = metric_key_map.get(metric)
-                        if not metric_name:
-                            metric_name = metric.replace('_dist', '') # Fallback if not in map
-                        # --- Add mapping for time metrics --- End ---
+                        metric_name = metric_key_map.get(metric, metric.replace('_dist', ''))
 
                         if values:
                             try: final[f"avg_{metric_name}"] = statistics.mean(values)
@@ -637,43 +664,51 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
                              final[f"avg_{metric_name}"] = None
                              final[f"median_{metric_name}"] = None
                              final[f"stdev_{metric_name}"] = None
-                    del final["metrics"]
+                    del final["metrics"] # Remove raw list after calculating stats
                     nested_final_stats[prompt_key] = final
                 final_stats_result[primary_key] = nested_final_stats
             else:
                 # Process flat dictionary (task -> stats)
                 stats = primary_value
                 total_reps = stats["total_replicates"]
+                non_zoo_replicates = stats.get("non_zoo_replicates", 0) # Get non-zoo count
+                non_zoo_render_success_count = stats.get("non_zoo_render_success_count", 0) # Get SCAD render success count
+                scad_gen_success_count = stats["scad_generation_success_count"] # Get SCAD gen success count
+                overall_pass_count = stats["overall_pass_count"] # Get overall pass count
                 checks_run = stats["checks_run_count"]
-                final = stats.copy()
-                # Calculate rates
-                final["scad_generation_success_rate"] = (stats["scad_generation_success_count"] / total_reps * 100) if total_reps > 0 else 0
-                final["render_success_rate"] = (stats["render_success_count"] / total_reps * 100) if total_reps > 0 else 0
-                final["overall_pass_rate"] = (stats["overall_pass_count"] / total_reps * 100) if total_reps > 0 else 0
+                final = stats.copy() # Copy accumulated counts (includes all raw counts now)
+
+                # --- Calculate rates with corrected denominators ---
+                # SCAD Gen Rate: Success / Non-Zoo Replicates
+                final["scad_generation_success_rate"] = (scad_gen_success_count / non_zoo_replicates * 100) if non_zoo_replicates > 0 else 0
+                # Keep original 'render_success_rate' using total_reps denominator if needed for other purposes, but rename clearly
+                final["any_stl_success_rate"] = (stats["render_success_count"] / total_reps * 100) if total_reps > 0 else 0
+                # NEW SCAD Render Rate: SCAD Render Success / Non-Zoo Replicates
+                final["scad_render_success_rate"] = (non_zoo_render_success_count / non_zoo_replicates * 100) if non_zoo_replicates > 0 else 0
+                # Overall Pass Rate: Overall Success / Total Replicates
+                final["overall_pass_rate"] = (overall_pass_count / total_reps * 100) if total_reps > 0 else 0
+
+                # Check pass rates remain relative to checks_run
                 final["watertight_pass_rate"] = (stats["watertight_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                 final["single_comp_pass_rate"] = (stats["single_comp_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                 final["bbox_acc_pass_rate"] = (stats["bbox_acc_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                 final["volume_pass_rate"] = (stats["volume_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                 final["hausdorff_pass_rate"] = (stats["hausdorff_pass_count"] / checks_run * 100) if checks_run > 0 else 0
                 final["chamfer_pass_rate"] = (stats["chamfer_pass_count"] / checks_run * 100) if checks_run > 0 else 0
+
                 # Calculate metric statistics
                 for metric, values in stats["metrics"].items():
-                    # --- Add mapping for time metrics --- Start ---
                     metric_key_map = {
                         "time_gen": "generation_time_seconds",
                         "time_render": "render_time_seconds",
                         "total_time": "total_time_seconds",
                         "chamfer_dist": "chamfer",
                         "haus_95p_dist": "hausdorff_95p",
-                        # --- Add cost/token mappings ---
                         "estimated_cost": "estimated_cost",
                         "prompt_tokens": "prompt_tokens",
                         "completion_tokens": "completion_tokens"
                     }
-                    metric_name = metric_key_map.get(metric)
-                    if not metric_name:
-                        metric_name = metric.replace('_dist', '') # Fallback if not in map
-                    # --- Add mapping for time metrics --- End ---
+                    metric_name = metric_key_map.get(metric, metric.replace('_dist', ''))
 
                     if values:
                         try: final[f"avg_{metric_name}"] = statistics.mean(values)
@@ -689,7 +724,11 @@ def calculate_summary_statistics(processed_data: List[Dict[str, Any]]) -> Tuple[
                          final[f"avg_{metric_name}"] = None
                          final[f"median_{metric_name}"] = None
                          final[f"stdev_{metric_name}"] = None
-                del final["metrics"]
+                del final["metrics"] # Remove raw list after calculating stats
+
+                # The raw counts needed for the dashboard are already in 'final'
+                # because we started with final = stats.copy()
+
                 final_stats_result[primary_key] = final
         return final_stats_result
 
