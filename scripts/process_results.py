@@ -240,9 +240,6 @@ def process_data_for_dashboard(results: List[Dict[str, Any]], config: Config) ->
 
         # --- Process Individual Check Results for Dashboard ---
 
-        # Render OK (Based on actual render status)
-        render_ok_display = render_success if render_status != "N/A" else "N/A"
-
         # Watertight (Directly from checks data if available)
         watertight_passed = checks_data.get("check_is_watertight")
 
@@ -275,21 +272,40 @@ def process_data_for_dashboard(results: List[Dict[str, Any]], config: Config) ->
                      break
              checks_run_display = "Pass" if all_executed_checks_passed else "Fail"
 
-        # --- Overall Pass Calculation ---
-        # Consider a run successful overall if SCAD gen passed AND
-        # (EITHER rendering passed AND all executed checks passed)
-        # OR (rendering was N/A AND all executed checks passed)
-        # This means for zoo_cli, success depends on scad_gen and checks_run_display == "Pass".
-        # For others, it depends on scad_gen, render_ok_display == "Pass", and checks_run_display == "Pass".
+        # --- Overall Pass Calculation (REVISED) ---
+        overall_passed = False # Default to False
+        # Determine SCAD generation success (used by both Zoo and non-Zoo logic)
+        # For Zoo, this generally means an output STL path was produced.
+        # For non-Zoo, it means the LLM produced valid SCAD code without generation errors.
+        scad_gen_success = entry.get("generation_error") is None or entry.get("generation_error") == ""
 
-        components_passed = [scad_gen_success]
-        if render_status != "N/A": # Only include render check if it was applicable
-             components_passed.append(render_success)
-        if checks_run_executed: # Only include check results if they were run
-             # Use the individual booleans from checks_data for overall calc
-             components_passed.extend(result for key in check_keys_to_verify if (result := checks_data.get(key)) is not None)
+        if provider == "zoo_cli":
+            # Zoo Pass Criteria: Gen success AND Checks Executed AND All Executed Checks Passed
+            if scad_gen_success and checks_run_executed:
+                # Check if all executed checks passed (reuse logic from checks_run_display)
+                all_executed_checks_passed_for_zoo = True
+                for key in check_keys_to_verify:
+                    result = checks_data.get(key)
+                    if result is False: # Check specifically for False
+                        all_executed_checks_passed_for_zoo = False
+                        break
+                overall_passed = all_executed_checks_passed_for_zoo
+            # Else: Remains False (either gen failed OR checks didn't run OR a check failed)
+        else:
+            # Non-Zoo Pass Criteria: SCAD Gen Success AND Render Success AND Checks Executed AND All Executed Checks Passed
+            render_status = entry.get("render_status", "N/A")
+            render_success = render_status == "Success"
 
-        overall_passed = all(comp is True for comp in components_passed if comp is not None)
+            if scad_gen_success and render_success and checks_run_executed:
+                 # Check if all executed checks passed (reuse logic from checks_run_display)
+                 all_executed_checks_passed_for_non_zoo = True
+                 for key in check_keys_to_verify:
+                     result = checks_data.get(key)
+                     if result is False: # Check specifically for False
+                         all_executed_checks_passed_for_non_zoo = False
+                         break
+                 overall_passed = all_executed_checks_passed_for_non_zoo
+            # Else: Remains False (gen failed OR render failed OR checks didn't run OR a check failed)
 
         # --- Format data for dashboard row ---
         row_data = {
