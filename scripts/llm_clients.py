@@ -704,6 +704,186 @@ class DeepSeekClient(BaseLLMClient):
 
 # --- Add DeepSeekClient --- End ---
 
+# --- Add QwenClient --- Start ---
+class QwenClient(BaseLLMClient):
+    """
+    Client wrapper for Alibaba Qwen API (OpenAI compatible).
+    Uses the DashScope API endpoint.
+    """
+
+    def __init__(self, model_name: str, **kwargs):
+        """
+        Initialize the Qwen client.
+
+        Args:
+            model_name: The specific Qwen model to use (e.g., 'qwen-plus', 'qwen-turbo').
+            **kwargs: Additional model-specific parameters from config.
+        """
+        init_kwargs = kwargs.copy()
+        provider = init_kwargs.pop('provider', 'qwen') # Ensure provider is set correctly
+        init_kwargs.pop('name', None) # Remove 'name' if present, use model_name
+        
+        super().__init__(provider=provider, model_name=model_name, **init_kwargs)
+        
+        try:
+            if not self.api_key:
+                 raise ConfigError("Qwen (DashScope) API key not found or empty.")
+            
+            # The base_url should be up to /v1, the openai library appends /chat/completions
+            # For international users:
+            qwen_base_url = kwargs.get('base_url', "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+            # For users in China (if applicable, could be made configurable):
+            # qwen_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+            self.client = OpenAI(
+                api_key=self.api_key, # This should be your DASHSCOPE_API_KEY
+                base_url=qwen_base_url,
+                timeout=kwargs.get('timeout_seconds', 600.0) # Default to 10 minutes timeout
+            )
+            logger.info(f"QwenClient initialized for model {self.model_name} using base_url: {self.client.base_url} with timeout: {self.client.timeout}")
+
+        except ConfigError as e:
+            logger.error(f"Configuration error initializing QwenClient: {e}")
+            raise LLMError(f"Configuration error for Qwen: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error initializing QwenClient for model {self.model_name}: {e}", exc_info=True)
+            raise LLMError(f"Failed to initialize Qwen client for {self.model_name}: {e}")
+
+        # Default parameters, Qwen API might ignore some if not supported by the specific model
+        self.default_params = {
+            'max_tokens': kwargs.get('max_tokens', 2048), # A common default, adjust as needed
+            'temperature': kwargs.get('temperature', 0.7),
+            'top_p': kwargs.get('top_p', 1.0),
+        }
+        # Add other common OpenAI params if present in config
+        for param in ['frequency_penalty', 'presence_penalty']:
+            if param in kwargs:
+                self.default_params[param] = kwargs[param]
+
+        # --- Add Qwen-specific reasoning/thinking parameters --- Start ---
+        self.qwen_reasoning_enabled = kwargs.get('qwen_reasoning_enabled', False)
+        self.qwen_thinking_budget_tokens = kwargs.get('qwen_thinking_budget_tokens', None)
+        if self.qwen_reasoning_enabled:
+            logger.info(f"Qwen model {self.model_name} configured with reasoning enabled.")
+            if self.qwen_thinking_budget_tokens is not None:
+                logger.info(f"Qwen model {self.model_name} configured with thinking budget: {self.qwen_thinking_budget_tokens} tokens.")
+        # --- Add Qwen-specific reasoning/thinking parameters --- End ---
+
+    @retry(
+        stop=stop_after_attempt(3), # Or use self.max_retries
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((openai.APIError, openai.APIConnectionError, openai.RateLimitError, Timeout)),
+        reraise=True
+    )
+    def generate_text(self, prompt: Union[str, List[Dict[str, str]]], **kwargs) -> str:
+        """
+        Generate text using Qwen API (chat completions endpoint).
+
+        Args:
+            prompt: The input prompt text (string) or a list of messages (dicts).
+            **kwargs: Additional parameters specific to this request.
+
+        Returns:
+            The generated text content.
+
+        Raises:
+            LLMError: If text generation fails.
+        """
+        request_params = {**self.default_params, **kwargs}
+
+        if isinstance(prompt, str):
+            messages = [{"role": "user", "content": prompt}]
+        elif isinstance(prompt, list):
+            messages = prompt # Assume it's already in the correct format
+        else:
+            raise LLMError("Invalid prompt type for QwenClient. Must be str or List[Dict].")
+        
+        log_prompt_content = messages[-1]['content'] if messages else ""
+        self._log_request(log_prompt_content, request_params) # Log original request_params before modification
+        
+        # --- Conditionally add Qwen reasoning/thinking parameters --- Start ---
+        api_call_params = request_params.copy()
+        extra_body_params = {} # Initialize
+
+        if self.qwen_reasoning_enabled:
+            extra_body_params["enable_thinking"] = True
+            logger.debug(f"Qwen reasoning enabled via extra_body.")
+
+            if self.qwen_thinking_budget_tokens is not None:
+                extra_body_params["thinking_budget"] = int(self.qwen_thinking_budget_tokens)
+                logger.debug(f"Qwen thinking_budget set to {self.qwen_thinking_budget_tokens} via extra_body.")
+        else:
+            extra_body_params["enable_thinking"] = False
+            logger.debug(f"Qwen reasoning NOT enabled, explicitly setting enable_thinking=False via extra_body for non-streaming call.")
+                
+        # Determine if streaming should be used
+        use_streaming = self.qwen_reasoning_enabled
+        if use_streaming:
+            logger.debug(f"Qwen API call will use streaming because reasoning is enabled.")
+        else:
+            logger.debug(f"Qwen API call will NOT use streaming because reasoning is not enabled.")
+
+        start_time = time.time()
+        try:
+            if use_streaming:
+                stream_response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    stream=True,
+                    extra_body=extra_body_params,
+                    **api_call_params
+                )
+                generated_text = ""
+                for chunk in stream_response:
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                        generated_text += chunk.choices[0].delta.content
+                self.last_response = None # Streaming response object is not a simple last response
+            else:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    stream=False,
+                    extra_body=extra_body_params,
+                    **api_call_params
+                )
+                self.last_response = response
+                if response.choices:
+                    message = response.choices[0].message
+                    generated_text = message.content or ""
+                    if not generated_text:
+                        logger.warning(f"Qwen API returned an empty message content for model {self.model_name} (non-streaming).")
+                else:
+                    logger.warning(f"Qwen API response had no choices for model {self.model_name} (non-streaming). Returning empty text.")
+                    generated_text = ""
+
+            duration = time.time() - start_time
+            self._log_response(generated_text, duration)
+            return generated_text
+
+        except openai.APIError as e:
+            logger.error(f"Qwen API error: {e.status_code} - {e.message}", exc_info=True)
+            raw_body = e.body # Can contain more details from Qwen API
+            logger.error(f"Qwen API error body: {raw_body}")
+            raise LLMError(f"Qwen API error ({e.status_code}): {e.message}. Body: {raw_body}")
+        except openai.APITimeoutError as e:
+             logger.error(f"Qwen API request timed out: {e}", exc_info=True)
+             raise LLMError(f"Qwen API request timed out: {e}")
+        except openai.APIConnectionError as e:
+             logger.error(f"Qwen API connection error: {e}", exc_info=True)
+             raise LLMError(f"Qwen API connection error: {e}")
+        except Exception as e:
+            raw_response_text = "<Could not read raw response>"
+            if isinstance(e, json.JSONDecodeError) and hasattr(e, 'doc'):
+                 raw_response_text = e.doc
+            elif hasattr(e, 'response') and hasattr(e.response, 'text'):
+                 try:
+                     raw_response_text = e.response.text
+                 except Exception: pass
+            logger.error(f"Unexpected error calling Qwen API for model {self.model_name}: {str(e)}\nRaw Response Text (partial): {raw_response_text[:1000]}", exc_info=True)
+            raise LLMError(f"Unexpected error interacting with Qwen API: {str(e)}")
+
+# --- Add QwenClient --- End ---
+
 
 def create_llm_client(model_config: Dict[str, Any]) -> BaseLLMClient:
     """
@@ -747,6 +927,11 @@ def create_llm_client(model_config: Dict[str, Any]) -> BaseLLMClient:
              logger.info(f"Detected DeepSeek provider. Using DeepSeekClient for model: {model_name}")
              return DeepSeekClient(model_name=model_name, **params)
         # --- Add DeepSeek --- End ---
+        # --- Add Qwen --- Start ---
+        elif provider == 'qwen':
+             logger.info(f"Detected Qwen provider. Using QwenClient for model: {model_name}")
+             return QwenClient(model_name=model_name, **params)
+        # --- Add Qwen --- End ---
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
     except Exception as e:
@@ -762,7 +947,7 @@ if __name__ == "__main__":
     
     # Set up command-line argument parsing
     parser = argparse.ArgumentParser(description="Test LLM clients with a simple prompt")
-    parser.add_argument("--provider", choices=["openai", "anthropic", "google"], help="LLM provider to test")
+    parser.add_argument("--provider", choices=["openai", "anthropic", "google", "deepseek", "qwen"], help="LLM provider to test")
     parser.add_argument("--model", help="Model name to use")
     parser.add_argument("--prompt", default="Write a haiku about programming in Python", help="Test prompt to send")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")

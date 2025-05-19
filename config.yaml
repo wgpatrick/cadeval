@@ -152,6 +152,30 @@ llm:
     max_tokens: 8192
     cost_per_million_input_tokens: 0.55 # Placeholder cost ($/Million Tokens)
     cost_per_million_output_tokens: 2.19 # Placeholder cost ($/Million Tokens)
+  - name: qwen3-8b # Example Qwen model
+    provider: qwen
+    temperature: 0.4 # Default temperature
+    max_tokens: 8192 # Default max_tokens
+    cost_per_million_input_tokens: 0.18 # Placeholder cost - please update
+    cost_per_million_output_tokens: 2.1 # Placeholder cost - please update
+    qwen_reasoning_enabled: true
+    qwen_thinking_budget_tokens: 4000 # Example value, adjust as needed
+  - name: qwen3-32b # Example Qwen model
+    provider: qwen
+    temperature: 0.4 # Default temperature
+    max_tokens: 16384 # Default max_tokens
+    cost_per_million_input_tokens: 0.7 # Placeholder cost - please update
+    cost_per_million_output_tokens: 8.4 # Placeholder cost - please update
+    qwen_reasoning_enabled: true
+    qwen_thinking_budget_tokens: 4000 # Example value, adjust as needed
+  - name: qwen3-235b-a22b # Example Qwen model
+    provider: qwen
+    temperature: 0.4 # Default temperature
+    max_tokens: 16384 # Default max_tokens
+    cost_per_million_input_tokens: 0.7 # Placeholder cost - please update
+    cost_per_million_output_tokens: 8.4 # Placeholder cost - please update
+    qwen_reasoning_enabled: true
+    qwen_thinking_budget_tokens: 4000 # Example value, adjust as needed  
   - name: zoo-ml-text-to-cad
     provider: zoo_cli
     cost_per_minute: 0.50 # Placeholder cost
@@ -167,4 +191,4 @@ geometry_check:
   volume_threshold_percent: 2.0
 
 evaluation:
-  num_replicates: 2
+  num_replicates: 1
