@@ -87,6 +87,12 @@ function getProvider(modelName) {
         return 'zoo';
     }
     
+    // --- Add Deepseek Check --- Start ---
+    if (modelLower.startsWith('deepseek')) {
+         return 'deepseek';
+    }
+    // --- Add Deepseek Check --- End ---
+    
     // Default: just use the first part before hyphen
     return modelLower.split('-')[0];
 }
@@ -336,6 +342,7 @@ function renderSummaryCharts(metaStatistics, taskStatistics, resultsByModel) {
         'openai': 'rgba(75, 192, 192, 0.6)',   // Teal - All OpenAI models
         'gpt': 'rgba(75, 192, 192, 0.6)',      // Teal - OpenAI (fallback)
         'zoo': 'rgba(255, 206, 86, 0.6)',      // Yellow
+        'deepseek': 'rgba(153, 102, 255, 0.6)', // Purple 
         'chatgpt': 'rgba(75, 192, 192, 0.6)',  // Teal - OpenAI (fallback)
         'o1': 'rgba(75, 192, 192, 0.6)',       // Teal - OpenAI (fallback)
         'o3': 'rgba(75, 192, 192, 0.6)',        // Teal - OpenAI (fallback)

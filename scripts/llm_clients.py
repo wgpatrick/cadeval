@@ -519,6 +519,192 @@ class GoogleAIClient(BaseLLMClient):
             raise LLMError(f"Unexpected error calling Google AI API: {str(e)}")
 
 
+# --- Add DeepSeekClient --- Start ---
+class DeepSeekClient(BaseLLMClient):
+    """
+    Client wrapper for DeepSeek API (OpenAI compatible).
+    Handles specifics like base_url and potentially reasoning_content.
+    """
+
+    def __init__(self, model_name: str, **kwargs):
+        """
+        Initialize the DeepSeek client.
+
+        Args:
+            model_name: The specific DeepSeek model to use (e.g., 'deepseek-chat', 'deepseek-coder', 'deepseek-reasoner', 'deepseek-r1').
+            **kwargs: Additional model-specific parameters from config.
+        """
+        init_kwargs = kwargs.copy()
+        provider = init_kwargs.pop('provider', 'deepseek') # Ensure provider is set correctly
+        init_kwargs.pop('name', None) # Remove 'name' if present, use model_name
+        
+        super().__init__(provider=provider, model_name=model_name, **init_kwargs)
+        
+        try:
+            # Ensure api_key is loaded by super() first
+            if not self.api_key:
+                 raise ConfigError("DeepSeek API key not found or empty.")
+                 
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=kwargs.get('base_url', "https://api.deepseek.com"), # Use config base_url or default
+                timeout=kwargs.get('timeout_seconds', 600.0) # Increase default timeout to 600s (10 mins)
+            )
+            logger.info(f"DeepSeekClient initialized for model {self.model_name} using base_url: {self.client.base_url} with timeout: {self.client.timeout}") # Log the actual timeout used
+
+        except ConfigError as e:
+            logger.error(f"Configuration error initializing DeepSeekClient: {e}")
+            raise LLMError(f"Configuration error for DeepSeek: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error initializing DeepSeekClient for model {self.model_name}: {e}", exc_info=True)
+            raise LLMError(f"Failed to initialize DeepSeek client for {self.model_name}: {e}")
+
+        # Store default parameters, removing unsupported ones for reasoning models if necessary
+        self.default_params = {
+            'max_tokens': kwargs.get('max_tokens', 4096), # Default based on DeepSeek docs examples
+            # Deepseek-reasoner (and likely r1) doesn't support these according to docs
+            # Conditionally add/remove them in generate_text based on model type?
+            # 'temperature': kwargs.get('temperature', 0.7), 
+            # 'top_p': kwargs.get('top_p', 1.0),
+            # 'frequency_penalty': kwargs.get('frequency_penalty', 0),
+            # 'presence_penalty': kwargs.get('presence_penalty', 0),
+        }
+        
+        # Add supported params if present in config
+        for param in ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty']:
+            if param in kwargs:
+                self.default_params[param] = kwargs[param]
+                
+        # Check if this model is a reasoning model to apply specific rules
+        # For now, let's assume models containing 'reasoner' or 'r1' are reasoning models
+        self.is_reasoning_model = 'reasoner' in self.model_name or 'r1' in self.model_name # Simple check for now
+        if self.is_reasoning_model:
+             logger.info(f"Model {self.model_name} identified as a reasoning model. Temperature/TopP etc. will be ignored by API.")
+             # Keep params in default_params, API ignores them, allows using same config structure
+
+
+    def generate_text(self, prompt: Union[str, List[Dict[str, str]]], **kwargs) -> str:
+        """
+        Generate text using DeepSeek API (chat completions endpoint).
+
+        Handles both single string prompts and message lists.
+        Strips 'reasoning_content' from assistant messages if present in the input list.
+
+        Args:
+            prompt: The input prompt text (string) or a list of messages (dicts).
+            **kwargs: Additional parameters specific to this request
+                      (overrides default parameters if provided).
+
+        Returns:
+            The generated text content.
+
+        Raises:
+            LLMError: If text generation fails.
+        """
+        request_params = {**self.default_params, **kwargs}
+
+        # --- Prepare messages ---
+        if isinstance(prompt, str):
+            messages = [{"role": "user", "content": prompt}]
+        elif isinstance(prompt, list):
+            # IMPORTANT: DeepSeek reasoning models require removing 'reasoning_content' 
+            # from previous assistant messages before sending.
+            messages = []
+            for msg in prompt:
+                 # Shallow copy the message dict
+                 new_msg = msg.copy() 
+                 # Remove 'reasoning_content' if it exists (Deepseek API returns 400 otherwise)
+                 if 'reasoning_content' in new_msg:
+                     del new_msg['reasoning_content']
+                     logger.debug("Removed 'reasoning_content' from assistant message before sending.")
+                 messages.append(new_msg)
+        else:
+            raise LLMError("Invalid prompt type for DeepSeekClient. Must be str or List[Dict].")
+
+        # --- Remove unsupported params for reasoning models (API ignores them, but good practice) ---
+        # According to docs, reasoning models ignore temp, top_p, presence_penalty, frequency_penalty
+        # The docs also state logprobs/top_logprobs cause errors. Ensure they aren't passed.
+        params_to_remove_for_reasoning = ['temperature', 'top_p', 'presence_penalty', 'frequency_penalty']
+        params_that_error = ['logprobs', 'top_logprobs']
+
+        final_request_params = request_params.copy()
+        
+        for param in params_that_error:
+            if param in final_request_params:
+                logger.warning(f"Removing unsupported parameter '{param}' for DeepSeek model {self.model_name}.")
+                del final_request_params[param]
+
+        if self.is_reasoning_model:
+            for param in params_to_remove_for_reasoning:
+                if param in final_request_params:
+                    # Don't strictly remove, API ignores them. Log if they were provided.
+                     logger.debug(f"Parameter '{param}' provided for reasoning model {self.model_name}. API will ignore it.")
+                     # del final_request_params[param] # Optionally remove if needed
+
+        # --- Log and Make API Call ---
+        self._log_request(messages[-1]['content'], final_request_params) # Log last user message content
+        
+        start_time = time.time()
+        try:
+            # Use standard chat completions endpoint
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                stream=False, # Assuming non-streaming for now based on other clients
+                **final_request_params
+            )
+            self.last_response = response # Store raw response
+
+            # --- Extract text ---
+            if response.choices:
+                message = response.choices[0].message
+                generated_text = message.content or "" # Get content, default to empty string
+                
+                # Log if reasoning_content was present (informational)
+                if hasattr(message, 'reasoning_content') and message.reasoning_content:
+                     logger.debug(f"Received 'reasoning_content' from model {self.model_name}.")
+                     # We are not currently using/storing this, just the main 'content'
+                     # You could potentially store it like: self.last_reasoning_content = message.reasoning_content
+                
+                if not generated_text:
+                     logger.warning(f"DeepSeek API returned an empty message content for model {self.model_name}.")
+
+            else:
+                logger.warning(f"DeepSeek API response had no choices for model {self.model_name}. Returning empty text.")
+                generated_text = ""
+
+            duration = time.time() - start_time
+            self._log_response(generated_text, duration)
+            return generated_text
+
+        except openai.APIError as e:
+            # Handle API-specific errors (e.g., 4xx, 5xx from DeepSeek)
+            logger.error(f"DeepSeek API error: {e.status_code} - {e.message}", exc_info=True)
+            raise LLMError(f"DeepSeek API error ({e.status_code}): {e.message}")
+        except openai.APITimeoutError as e:
+             logger.error(f"DeepSeek API request timed out: {e}", exc_info=True)
+             raise LLMError(f"DeepSeek API request timed out: {e}")
+        except openai.APIConnectionError as e:
+             logger.error(f"DeepSeek API connection error: {e}", exc_info=True)
+             raise LLMError(f"DeepSeek API connection error: {e}")
+        except Exception as e:
+            # Catch any other unexpected errors during the API call or processing
+            # --- Log Raw Response on JSON Error --- Start ---
+            raw_response_text = "<Could not read raw response>"
+            if isinstance(e, json.JSONDecodeError) and hasattr(e, 'doc'):
+                 raw_response_text = e.doc # The doc attribute holds the string that failed to parse
+            elif hasattr(e, 'response') and hasattr(e.response, 'text'): # Fallback for other potential errors
+                 try:
+                     raw_response_text = e.response.text
+                 except Exception:
+                      pass
+            logger.error(f"Unexpected error calling DeepSeek API for model {self.model_name}: {str(e)}\nRaw Response Text: {raw_response_text[:1000]}...", exc_info=True) # Log first 1000 chars
+            # --- Log Raw Response on JSON Error --- End ---
+            raise LLMError(f"Unexpected error interacting with DeepSeek API: {str(e)}")
+
+# --- Add DeepSeekClient --- End ---
+
+
 def create_llm_client(model_config: Dict[str, Any]) -> BaseLLMClient:
     """
     Factory function to create the appropriate LLM client based on provider.
@@ -556,6 +742,11 @@ def create_llm_client(model_config: Dict[str, Any]) -> BaseLLMClient:
             return AnthropicClient(model_name=model_name, **params)
         elif provider == 'google':
             return GoogleAIClient(model_name=model_name, **params)
+        # --- Add DeepSeek --- Start ---
+        elif provider == 'deepseek':
+             logger.info(f"Detected DeepSeek provider. Using DeepSeekClient for model: {model_name}")
+             return DeepSeekClient(model_name=model_name, **params)
+        # --- Add DeepSeek --- End ---
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
     except Exception as e:

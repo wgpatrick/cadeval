@@ -170,6 +170,21 @@ def generate_scad_for_task(
                  except AttributeError:
                      logger.warning(f"Token usage attribute ('usage_metadata') is missing in the response structure for Google model {client.model_name}.")
 
+            # --- Add DeepSeek Token Extraction --- Start ---
+            elif client.provider == 'deepseek':
+                 # Uses standard OpenAI 'usage' structure
+                 try:
+                     if hasattr(raw_response, 'usage') and raw_response.usage:
+                         prompt_tokens = getattr(raw_response.usage, 'prompt_tokens', None)
+                         completion_tokens = getattr(raw_response.usage, 'completion_tokens', None)
+                         if prompt_tokens is None or completion_tokens is None:
+                              logger.warning(f"Could not find populated prompt/completion tokens in usage object for DeepSeek model {client.model_name}.")
+                     else:
+                          logger.warning(f"Could not find populated usage information in response object for DeepSeek model {client.model_name}.")
+                 except AttributeError:
+                      logger.warning(f"Token usage attribute ('usage') is missing in the response structure for DeepSeek model {client.model_name}.")
+            # --- Add DeepSeek Token Extraction --- End ---
+
             result["prompt_tokens"] = prompt_tokens
             result["completion_tokens"] = completion_tokens
             if prompt_tokens is not None or completion_tokens is not None:

@@ -244,7 +244,8 @@ class Config:
         provider_env_map = {
             'openai': 'OPENAI_API_KEY',
             'anthropic': 'ANTHROPIC_API_KEY',
-            'google': 'GOOGLE_API_KEY'
+            'google': 'GOOGLE_API_KEY',
+            'deepseek': 'DEEPSEEK_API_KEY'
         }
         
         if provider.lower() not in provider_env_map:

@@ -146,12 +146,19 @@ llm:
     max_tokens: 15000
     cost_per_million_input_tokens: 1.25 # Placeholder cost ($/Million Tokens)
     cost_per_million_output_tokens: 5.0 # Placeholder cost ($/Million Tokens)
+  - name: deepseek-reasoner
+    provider: deepseek
+    temperature: 0.4
+    max_tokens: 8192
+    cost_per_million_input_tokens: 0.55 # Placeholder cost ($/Million Tokens)
+    cost_per_million_output_tokens: 2.19 # Placeholder cost ($/Million Tokens)
   - name: zoo-ml-text-to-cad
     provider: zoo_cli
     cost_per_minute: 0.50 # Placeholder cost
     free_tier_seconds: 10 # Placeholder value
     cli_args:
       output_format: stl
+  
 geometry_check:
   bounding_box_tolerance_mm: 1.0
   icp_fitness_threshold: 1.0
